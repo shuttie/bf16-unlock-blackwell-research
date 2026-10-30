@@ -1,0 +1,279 @@
+# Privilege and rate control
+
+This spec covers the selector that sets tensor throughput, the privilege mask that
+protects it, and the measurements behind both. Claims are tagged `[measured]` when
+they came from the two local cards, `[source]` when they came from vendor or public
+documentation, and `[analogy]` when they are carried over from Ada/Ampere.
+
+## 1. The cap is product segmentation
+
+The RTX 5090 and the RTX PRO 6000 use the same GB202 die. The 5090 runs the
+FP32-accumulate tensor path at about half the FP16-accumulate rate; the PRO 6000
+runs both at the same rate `[source]`. The limit is a fuse-programmed speed
+selector, not a missing execution unit.
+
+| Case | Result | Provenance |
+|---|---:|---|
+| FP16 → FP16 accumulate | 441.4 TF/s | external issue-rate probe, driver 610.57.04 |
+| FP16 → FP32 accumulate | 224.3 TF/s | same probe |
+| BF16 → FP32 accumulate | 222.8 TF/s | same probe |
+| BF16 → FP32, two local cards | 226.6 / 229.6 TF/s | this machine, driver 595.91.07 |
+| RTX PRO 6000, same GB202 die | 503.8 / 503.8 TF/s | vendor whitepaper, not measured here |
+| BF16 cuBLAS GEMM, 8192³ | 234.8 TF/s | 5090 D, a different SKU |
+
+The local probe has no FP16-accumulate mode, so the ~2× ratio is inferred from the
+external full-rate number and the local FP32-accumulate baseline. The PRO 6000 row
+is vendor data; no PRO 6000 was available for a register dump.
+
+The cap matters for compute-bound FP16/BF16 work that uses FP32 accumulation:
+prefill, long-context inference, diffusion, LoRA and training. It does not affect
+token decode, FP8/FP4/INT8, or kernels that use FP16 accumulation.
+
+## 2. Privilege levels and the PLM
+
+| Level | Name | Firmware that runs there |
+|---|---|---|
+| PL0 | Non-Secure (NS) | host CPU and ordinary driver access |
+| PL2 | Light Secure (LS) | GSP-RM; PMU devinit |
+| PL3 | Heavy Secure (HS) | FSP; GSP BootROM; FMC; SEC2 HS ucode; FWSEC-FRTS |
+
+The FEAT bank is readable from every level. Its write permission is a 32-bit
+privilege-level mask (PLM). The low byte follows the Falcon v4 layout `[source]`;
+the fields above it are applied by analogy `[analogy]`.
+
+| Field | Bits | `0xfffffb8f` (stock) | `0x80842bcf` (after FLR) |
+|---|---|---:|---:|
+| Read mask | `3:0` | `0xf` (all levels) | `0xf` (all levels) |
+| Write mask | `7:4` | `0x8` (PL3 only) | `0xc` (PL2 + PL3) |
+| Read violation | `8` | 1 | 1 |
+| Write violation | `9` | 1 | 1 |
+| Source read control | `10` | 0 (lowered) | 0 |
+| Source write control | `11` | 1 (blocked) | 1 |
+| Source enable | `31:12` | `0xfffff` (all 20 sources) | `0x80842` |
+
+The stock write mask is the entire wall: only PL3 may write the bank. Host BAR0
+writes (PL0) and GSP-RM writes (PL2) are dropped silently. The drop still returns
+`SUCCESS`; only a readback distinguishes it. See
+[E08](../experiments/01_software-register-writes.md) for the PL2 write and PBUS
+positive control, and [E53](../experiments/01_software-register-writes.md) for the
+PLM decode.
+
+The PLM is not static across resets `[measured]`:
+
+| Event | Value | Meaning |
+|---|---|---|
+| Stock boot | `0xfffffb8f` | write PL3 only |
+| PCI FLR | `0x80842bcf` | write PL2 + PL3 |
+| Re-lock after FLR | `0xfffffb8f` | GPU-side devinit, before the first open |
+
+The FLR window is real but short. A direct BAR0 poller measures the re-lock at
+1156–1323 ms after the FLR; the first GSP-RM program counter appears at 3176 ms.
+The re-lock therefore lands about 1.85 s before the only PL2 master exists. An
+early open does not help: the open→GSP-RM path is about 2.1 s, longer than the
+1.32 s window. See [E65](../experiments/05_fmc-fsp-boot-inputs.md) and
+[E70](../experiments/01_software-register-writes.md).
+
+**Self-access rule.** The PLM gates external masters, not an engine's own
+registers. The same PL2 path that cannot write the FEAT bank can write the GSP's
+own Falcon EMEM. The distinguishing property is whether the target belongs to the
+executing engine, not the caller's numeric level.
+
+## 3. The selector chain
+
+```
+  one-time fuse -> SS0/SS1 override -> FECS/GPCCS microcode -> SM issue rate
+                          ^
+                   FEAT_OVR_PLM  (write gate: PL3 only)
+```
+
+FECS/GPCCS is the GR front-end and context-switch microcode; SM is the streaming
+multiprocessor. The GSP reads the fused value to populate its static-info getter,
+but it does not write the override.
+
+### 3.1 Fuses
+
+| Register | Offset | GB202/GB203M |
+|---|---|---:|
+| `FUSE_SS_DP` | `0x00820224` | 0 |
+| `FUSE_SS_FFMA` | `0x0082059c` | 0 |
+| `FUSE_SS_FMLA16` | `0x008207d4` | 0 |
+| `FUSE_SS_FMLA32` | `0x008207d8` | 3 |
+| `FUSE_SS_IMLA0` | `0x008207dc` | 0 |
+| `FUSE_SS_IMLA1` | `0x008207e0` | 3 |
+| `FUSE_SS_IMLA2` | `0x008207e4` | 3 |
+| `FUSE_SS_IMLA3` | `0x008207e8` | 0 |
+| `FUSE_SS_IMLA4` | `0x008207ec` | 3 |
+
+The fuse block is read-only to the host and to the GSP `[measured]`. The page-0
+mask `FUSE_SS_PLM` (`0x8200fc`) reads `0xfffffbff`, which looks write-all, but it
+is not the effective gate: writes to `0x82074c` and `0x8207d8` stay unchanged from
+both PL0 and PL2. See [E12](../experiments/01_software-register-writes.md).
+
+### 3.2 FEAT bank
+
+| Offset | Name | Stock | Role |
+|---|---|---:|---|
+| `0x823800` | `FEAT_OVR_ECC_PLM` | `0xfffffb8f` | ECC PLM; alias or second copy |
+| `0x823804` | `FEAT_OVR_PLM` | `0xfffffb8f` | bank write gate |
+| `0x823808` | `FEAT_OVR_QUADRO` | per-card | classification, not rate |
+| `0x82380c` | `FEAT_OVR_ECC` | `0x00888888` | consumer stock ECC override |
+| `0x823810` | `FEAT_OVR_ECC_1` | `0x002a2aaa` | ECC |
+| `0x823814` | `FEAT_READOUT_0` | `0x00000233` | bit 16 = ECC enablement |
+| `0x823818` | `FEAT_READOUT_1` | `0x00c36180` | selector readout |
+| `0x82381c` | `FEAT_OVR_SM_SS0` | per-card | eight 4-bit override fields |
+| `0x823820` | `FEAT_OVR_SM_SS1` | per-card | ninth field in `[3:0]` |
+| `0x823824` | `FEAT_OVR_ROW_REMAP` | `3` | row remap |
+| `0x823828` | `FEAT_READOUT_2` | `1` | readout |
+| `0x82382c` | `FEAT_OVR_ECC_2` | `0xa` | ECC |
+
+`0x82380c = 0x00888888` is `FEAT_OVR_ECC`, the stock consumer-GA10x ECC override,
+not an Ada speed payload. The nibble pattern is a coincidence. See
+[E56](../experiments/08_assessment-and-cross-checks.md).
+
+### 3.3 Selector encoding
+
+`SS0` holds eight 4-bit fields; `SS1` holds the ninth in `[3:0]`. Each field uses
+bit 3 as the override enable and bits 2:0 as the selector. The Ada/Ampere encoding
+is `0` = full rate, `1` = 1/2, `2` = 1/4, `3` = 1/8; the unlock payload was
+`SS0 = 0x88888888`, `SS1 = 0x8` `[analogy]`.
+
+At stock every enable bit is clear, so the fused selectors are in force. The
+non-zero stock words are pre-driver shadow state. They vary across cold boots but
+are invariant within a boot and across warm reboots `[measured]`:
+
+| Card | Example SS0 values across cold boots | SS1 |
+|---|---|---|
+| `41:00.0` | `0x21240001`, `0x20240001`, `0x20260041`, `0x21265047`, `0x21265043` | `0x00000002` |
+| `c1:00.0` | `0x54226037` / `0x54224037` | `0x00026005` / `0x00024005` |
+
+Both cards measure identically per clock, so the differing words are binning/state,
+not selectors. See [E49](../experiments/02_registry-and-static-audit.md) and
+[E64](../experiments/05_fmc-fsp-boot-inputs.md).
+
+`FEAT_READOUT_1` packs eight 3-bit selectors plus DP from a separate field
+`[measured]`:
+
+| Field | Bits | Stock `0x00c36180` |
+|---|---:|---:|
+| imla0 | 2:0 | 0 |
+| fmla16 | 5:3 | 0 |
+| fmla32 | 9:7 | 3 |
+| ffma | 12:10 | 0 |
+| imla1 | 15:13 | 3 |
+| imla2 | 18:16 | 3 |
+| imla3 | 21:19 | 0 |
+| imla4 | 24:22 | 3 |
+| DP | 30:28 | 0 |
+
+The readout is a fuse mirror, not an effective-rate readout. A `3` in `fmla32`
+comes with a ~2× penalty, not the public enum’s 1/8, and `imla1/2/4 = 3` still runs
+INT8 at full rate. The Blackwell code→rate law is not the Ada law.
+
+## 4. The RM getter and the host view
+
+`NV2080_CTRL_CMD_GR_GET_SM_ISSUE_RATE_MODIFIER` (`0x20801230`) returns the nine
+bytes copied from `KGRAPHICS_STATIC_INFO`:
+
+```
+imla0=0, fmla16=0, dp=0, fmla32=3, ffma=0, imla1=3, imla2=3, imla3=0, imla4=3
+```
+
+V2 (`0x2080123c`) returns ten entries: FMLA16=0, FMLA32=3, FFMA=0, IMLA0=0,
+IMLA1=3, IMLA2=3, IMLA3=0, IMLA4=3, FP16=0, FP32=0. The throttle getter
+(`0x2080123d`) returns one `MASK=0` entry. All three are GET-only.
+
+`SM_ISSUE_RATE_MODIFIER` (`0x504204`) is the one rate-related register that is
+genuinely writable `[measured]`:
+
+| Action | Result |
+|---|---|
+| Host PL0 write `0`, readback | 0 |
+| GSP PL2 write `0`, readback | 0 |
+| Restore `5` | 5 |
+| At CUDA context creation | reasserted to 5 |
+| Held at 0 after `cuCtxCreate` | stays 0 through every launch |
+
+Holding it at 0 does not change the measured rate:
+
+| Mode | Modifier 5 | Held at 0 |
+|---|---:|---:|
+| FP16 → FP32 | 227.1 TF/s | 227.1 |
+| BF16 → FP32 | 227.1 TF/s | 225.9 |
+| TF32 → FP32 | 113.6 TF/s | 113.0 |
+| U4 → S32 | 596.5 TOPS | 591.1 |
+
+The value 5 is applied by firmware/devinit or a context-switch restore, not by the
+host driver or GSP-RM. See [E12](../experiments/01_software-register-writes.md) and
+[E58](../experiments/08_assessment-and-cross-checks.md).
+
+The host driver is telemetry, not a lever. It fetches the nine selectors at GR init
+and caches them; its only FEAT-bank access is the `0x823814` ECC readout. The
+GB202-specific driver file is a vGPU-only HAL and does not override the reset or
+COT path.
+
+## 5. Cross-part comparison
+
+| Part | `FEAT_READOUT_1` | `FUSE_SS_FMLA32` | Measured FP32-accumulate rate |
+|---|---:|---:|---|
+| A100 | `0x00000000` | 0 | full |
+| Consumer Ampere | `0x00400080` | 1 | half |
+| Ada | `0x00410080` | not dumped | half |
+| GB202/GB203M | `0x00c36180` | 3 | ~half |
+
+On every generation with a public dump, the readout mirrors the fuse words, and
+zero is the full-rate encoding. A100 is the strongest reference because it is a
+full-rate part that reads all zeros. No full-rate Blackwell part has been dumped,
+so the Blackwell target is inferred `[analogy]`: every field of `FEAT_READOUT_1`
+should decode to 0, including DP `[30:28]`.
+
+## 6. What is proven, what is inferred
+
+Proven on hardware:
+- The FEAT bank drops PL2 writes and returns success.
+- The FUSE shadow is not writable from PL0 or PL2.
+- The PLM is PL3-only at stock and is re-locked by GPU-side devinit after an FLR.
+- SS0/SS1 are per-boot shadow state, not selectors.
+- `SM_ISSUE_RATE_MODIFIER` is writable but reasserted and inert.
+
+Inferred or open:
+- The readout→rate mapping. `FMLA32 = 3` with a ~2× penalty is not the Ada law.
+- The full-rate encoding. A PRO 6000 `FEAT_READOUT_1`/`SS0`/`SS1`/fuse dump would
+  settle it; no such dump exists here.
+- The pre-lock FEAT writer. The timing points to a GPU-side devinit, most likely
+  the PMU, but the FSP/BootROM or a hardware re-latch are not excluded.
+- The per-SM selector. Only the global FEAT bank was probed; per-SM copies could
+  have a different gate.
+- The Ada persistence model. On GB202 an FLR resets the PLM and the devinit
+  re-locks it; the override does not stay open across reset.
+
+## 7. What would count as an unlock
+
+1. The rate getter reports `fmla32 = 0`.
+2. `FEAT_READOUT_1` decodes to zero selectors on a Blackwell-correct layout.
+3. `SS0`/`SS1` read back the intended values.
+4. BF16→FP32 issue rate is about 440 TF/s, with FP16→FP16, INT8, FP8, and scalar
+   controls unchanged.
+5. A matched BF16 GEMM shows a real gain with numerical validation.
+6. The override survives an FLR, a driver reload, and a device enable; the driver
+   loads without GPU or GSP errors.
+7. It reproduces on a second cold boot and a second card.
+
+Issue-rate numbers alone are not enough; Ada GEMM gains were shape-dependent.
+
+## 8. Evidence map
+
+| Topic | Experiments | Tools |
+|---|---|---|
+| FEAT write drop, positive control | [E08](../experiments/01_software-register-writes.md) | [register access](../tools/register-access/) |
+| Wider FEAT bank, `0x82380c` | [E09](../experiments/01_software-register-writes.md) | [register access](../tools/register-access/) |
+| FUSE shadow, rate register | [E12](../experiments/01_software-register-writes.md) | [register access](../tools/register-access/), [issue-rate probe](../tools/issue-rate-probe/) |
+| PLM decode | [E53](../experiments/01_software-register-writes.md) | offline |
+| Two-card rate baseline | [E49](../experiments/02_registry-and-static-audit.md) | [issue-rate probe](../tools/issue-rate-probe/) |
+| Registry selectors | [E50, E51](../experiments/02_registry-and-static-audit.md) | [issue-rate probe](../tools/issue-rate-probe/) |
+| Cross-part corpus, `0x82380c` | [E56](../experiments/08_assessment-and-cross-checks.md) | offline |
+| Getter/static-info consumers | [E58](../experiments/08_assessment-and-cross-checks.md) | [GSP-RM tools](../tools/gsp-rm-tools/) |
+| FLR window and re-lock | [E65](../experiments/05_fmc-fsp-boot-inputs.md), [E70](../experiments/01_software-register-writes.md) | [driver harness](../tools/driver-harness/) |
+
+Register values and the full FEAT/FUSE maps are in
+[03_register-map.md](../specs/03_register-map.md). The boot chain that runs before
+the driver is in [01_boot-chain.md](../specs/01_boot-chain.md).
