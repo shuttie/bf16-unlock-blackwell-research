@@ -20,7 +20,7 @@ Test rig: 2× RTX 5090 (GB202, `10de:2b85`), different board vendors and VBIOS
 revisions, host driver and GPU firmware 595.91.07, compute capability 12.0, CUDA 13
 on Linux, 575 W. The experiments ran 2026-10-25 to 2026-10-29.
 
-This is research, not an exploit, and I'm not redistributing NVIDIA firmware.
+This is research. I'm not redistributing NVIDIA firmware.
 
 ## The cap and the 3090/4090 unlock
 
@@ -51,8 +51,9 @@ admits only PL3, the level where NVIDIA's boot firmware runs.
 | RTX PRO 6000 | 503.8 TF/s | NVIDIA whitepaper, not measured |
 | BF16 cuBLAS GEMM 8192³ | 234.8 TF/s | 5090 D, different SKU |
 
-My two cards measure 226.6 and 229.6 TF/s on 595.91.07. The local probe has no
-FP16-accumulate mode, so the ~2× ratio is inferred from the ai.rs number.
+My two cards measure 226.6 and 229.6 TF/s on the BF16 → FP32 path on 595.91.07.
+The local probe has no FP16-accumulate mode, so the ~2× ratio is inferred from the
+ai.rs number.
 
 ### How the 3090/4090 unlock worked
 
@@ -68,8 +69,8 @@ The route depended on a leaked NVIDIA test key. The debug booters were encrypted
 with it ([published test
 key](https://gist.github.com/nvlight/fc7479629b0ace094873e58ba7d75eb2/743ca6adaa87034054112936f37e146126b7705c)),
 so researchers could decrypt them and mine the code for gadgets. That key does not
-work on GB202: it gives no known-answer match, and the full 16! search over its
-[permutation family came back empty](experiments/07_plaintext-corpus.md).
+work on GB202: it gives no known-answer match, and the full 16! search over the
+key's [permutation family came back empty](experiments/07_plaintext-corpus.md).
 
 A kernel module starts a signed SEC2 boot image. SEC2 is the GPU's security
 coprocessor. The booter copies signature data with a length the host controls. The
@@ -137,8 +138,8 @@ FEAT block](experiments/05_fmc-fsp-boot-inputs.md), and the tables that do exist
 
 ## What I tried
 
-Eight kinds of attack. None of them wrote the selector. Each row links to the
-experiment record with the commands and artifacts.
+I tried eight kinds of attack. None of them wrote the selector. Each row links to
+the experiment record with the commands and artifacts.
 
 | What I did | Result | Status | Records |
 |---|---|---|---|
@@ -171,8 +172,8 @@ The four surfaces I would probe next, in order:
    is not checked. A malformed-length packet is the remaining test.
 3. **The two remaining boot-descriptor sizes.** `fbSize` and `nonWprHeapSize` are
    the layout fields I did not vary ([boot-input
-   experiments](experiments/05_fmc-fsp-boot-inputs.md)). One may move the protected
-   region in the other direction.
+   experiments](experiments/05_fmc-fsp-boot-inputs.md)). One of them may move the
+   protected region in the other direction.
 4. **[The per-SM context register space](experiments/01_software-register-writes.md).**
    The cheap host route is closed. Testing it needs a channel owned by the calling
    driver client, and the GSP may still reject it.
@@ -197,8 +198,8 @@ Two different things are missing:
 
 - The driver's rate getter reports the capped field clear.
 - BF16 issue rate near 440 TF/s, with a matched BF16 GEMM and numerical validation.
-- The override survives an FLR, a driver reload, and a device enable, and the
-  driver loads without GPU or GSP errors.
+- The override survives an FLR, a driver reload, and a device enable. The driver
+  loads without GPU or GSP errors.
 - It reproduces on a second cold boot and a second card.
 
 ## Reverse-engineered specs
@@ -223,8 +224,8 @@ header or is carried over from Ada/Ampere, the spec says so.
 
 ## Tools
 
-Everything I used is here, minus NVIDIA's firmware. These are research harnesses,
-not polished utilities. Each directory has a README with build and run steps.
+Everything I used is here, minus NVIDIA's firmware. These are research tools;
+expect rough edges. Each directory has a README with build and run steps.
 
 | Tool | What it does | Needs | Read / write / hang |
 |---|---|---|---|
@@ -234,7 +235,7 @@ not polished utilities. Each directory has a README with build and run steps.
 | [vBIOS tools](tools/vbios-tools/) | Dumps the flash window and parses the image chain, info table, microcode table, and init tables | live card or a local dump | read |
 | [GSP-RM tools](tools/gsp-rm-tools/) | Ghidra helpers for the 72.8 MB RISC-V GSP-RM, a raw reference scanner, the module splitter, and the GSP log decoder | your own extracted firmware | offline |
 | [FMC tools](tools/fmc-tools/) | Extracts the FMC and boot images, verifies signatures, and runs the 16! key search | your own driver package | offline |
-| [Driver harness](tools/driver-harness/) | Instrumented-driver harness: boot-input and suspend/resume tests, FEAT samplers, context dumps, debug-engine tools, FMC key search | an exact 595.91.07 driver source tree | read/write; can hang + reboot |
+| [Driver harness](tools/driver-harness/) | Instrumented-driver harness: boot-input and suspend/resume tests, FEAT samplers, context dumps, debug-engine tools | an exact 595.91.07 driver source tree | read/write; can hang + reboot |
 | [Boot tests](tools/boot-tests/) | Registry-key boot experiments: withholding boot regions and the host-driven FMC bootstrap | live card, root | read/write; can hang + reboot |
 
 No NVIDIA firmware, driver binary, or decompiled GSP-RM tree is in this repo. The
@@ -242,7 +243,7 @@ tools that need images expect you to extract them from your own driver package.
 
 ## Scope, license, contributing
 
-This is a research log, not an exploit. It contains no working unlock. I am not
+This is a research log. There is no working exploit or unlock in it. I am not
 affiliated with NVIDIA.
 
 The text is CC BY 4.0. The tool source is MIT.
