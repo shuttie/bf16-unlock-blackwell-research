@@ -16,21 +16,24 @@ and [3090](https://github.com/Zagitta/gpu-unlock) cards.
    - [the reverse-engineered specs](#reverse-engineered-specs)
    - [the tools](#tools)
 
-Test rig: 2× RTX 5090 (GB202, `10de:2b85`), different board vendors and VBIOS
-revisions, host driver and GPU firmware 595.91.07, compute capability 12.0, CUDA 13
-on Linux, 575 W. The experiments ran 2026-10-25 to 2026-10-29.
+**Test rig.**
+
+- 2× RTX 5090 (GB202, `10de:2b85`), different board vendors and VBIOS revisions.
+- Host driver and GPU firmware 595.91.07, compute capability 12.0, CUDA 13 on
+  Linux, 575 W.
+- Experiments ran 2026-10-25 to 2026-10-29.
 
 This is research. I'm not redistributing NVIDIA firmware.
 
 ## The cap and the 3090/4090 unlock
 
-A consumer 5090 uses the same GB202 die as an RTX PRO 6000. NVIDIA sells the
-consumer card with a 1/2 throughput limit on the FP32-accumulate path. Every BF16
-tensor op uses that path, so BF16 lands at half rate. The limit is a
+**The cap.** A consumer 5090 uses the same GB202 die as an RTX PRO 6000. NVIDIA
+sells the consumer card with a 1/2 throughput limit on the FP32-accumulate path.
+Every BF16 tensor op uses that path, so BF16 lands at half rate. The limit is a
 fuse-programmed 3-bit selector. The professional card runs the same path at full
 rate.
 
-The chain from fuse to issue rate is short:
+**The chain.** From fuse to issue rate:
 
 ```
   one-time fuse -> SS0/SS1 override -> FECS/GPCCS microcode -> SM issue rate
@@ -42,6 +45,8 @@ The chain from fuse to issue rate is short:
 GPU's front-end and context-switch microcode; SM is the streaming multiprocessor.
 The PLM is the bank's read/write permission mask; on the 5090 its write field
 admits only PL3, the level where NVIDIA's boot firmware runs.
+
+**The measured baseline.**
 
 | What | Measured | Source |
 |---|---:|---|
@@ -70,14 +75,18 @@ with it ([published test
 key](https://gist.github.com/nvlight/fc7479629b0ace094873e58ba7d75eb2/743ca6adaa87034054112936f37e146126b7705c)),
 so researchers could decrypt them and mine the code for gadgets. That key does not
 work on GB202: it gives no known-answer match, and the full 16! search over the
-key's [permutation family came back empty](experiments/07_plaintext-corpus.md).
+key's [permutation family came back
+empty](experiments/07_plaintext-corpus.md#0710-the-fmc-key-search-comes-back-negative).
 
-A kernel module starts a signed SEC2 boot image. SEC2 is the GPU's security
-coprocessor. The booter copies signature data with a length the host controls. The
-copy overflows the stack, and a ROP chain (return-oriented programming), built from
-instructions already in the signed image, takes over. It writes `FEAT_OVR_PLM` to
-open the bank, then `SS0 = 0x88888888` and `SS1 = 0x8`. A PCI function-level reset
-(FLR) resets the card; the stock driver binds; the override stays.
+- A kernel module starts a signed SEC2 boot image. SEC2 is the GPU's security
+  coprocessor.
+- The booter copies signature data with a length the host controls.
+- The copy overflows the stack. A ROP chain (return-oriented programming), built
+  from instructions already in the signed image, takes over.
+- It writes `FEAT_OVR_PLM` to open the bank, then `SS0 = 0x88888888` and
+  `SS1 = 0x8`.
+- A PCI function-level reset (FLR) resets the card; the stock driver binds; the
+  override stays.
 
 ```
   signed SEC2 booter
@@ -114,18 +123,21 @@ The boot order:
 Three things changed, and together they close the old route:
 
 1. **The SEC2 route is gone.** [No GB20x SEC2 booter
-   ships](experiments/07_plaintext-corpus.md), and the leaked test key [does not
-   reproduce on GB202](experiments/07_plaintext-corpus.md).
+   ships](experiments/07_plaintext-corpus.md#071-pl3-components-in-the-driver-package),
+   and the leaked test key [does not reproduce on
+   GB202](experiments/07_plaintext-corpus.md#075-the-ga100-test-key-does-not-fit).
 2. **The FEAT bank is [final before the FMC
-   runs](experiments/05_fmc-fsp-boot-inputs.md).** A GPU-side devinit (an
-   initialization routine that runs before the driver) writes the override words
-   and locks the bank. The driver and GSP-RM do not write it.
+   runs](experiments/05_fmc-fsp-boot-inputs.md#0517-feat-bank-final-before-the-fmc).**
+   A GPU-side devinit (an initialization routine that runs before the driver)
+   writes the override words and locks the bank. The driver and GSP-RM do not
+   write it.
 3. **The write mask is
-   [PL3-only](experiments/01_software-register-writes.md).** Host writes (PL0) are
-   dropped. GSP-RM writes (PL2) are also dropped. An FLR briefly opens a PL2
-   window, but [a GPU-side devinit](experiments/05_fmc-fsp-boot-inputs.md)
+   [PL3-only](experiments/01_software-register-writes.md#012-speed-register-write-from-gsp-is-dropped).**
+   Host writes (PL0) are dropped. GSP-RM writes (PL2) are also dropped. An FLR
+   briefly opens a PL2 window, but [a GPU-side
+   devinit](experiments/05_fmc-fsp-boot-inputs.md#0521-plm-re-lock-is-autonomous-devinit)
    [re-locks it 1.85 s before GSP-RM
-   starts](experiments/01_software-register-writes.md).
+   starts](experiments/01_software-register-writes.md#016-the-post-reset-window-closes-before-gsp-rm).
 
 That leaves PL3. A GSP-RM bug is not enough because GSP-RM runs at PL2; a host
 write is not enough because the host is PL0. The host-facing surfaces at PL3 are
@@ -133,8 +145,8 @@ the FSP message parser, the FMC boot-parameter parser, and the suspend/resume pa
 table. A bug in one of those is the remaining class.
 
 The vBIOS is not a shortcut either. Its plaintext init tables [do not name the
-FEAT block](experiments/05_fmc-fsp-boot-inputs.md), and the tables that do exist
-[are authenticated in Heavy Secure](experiments/05_fmc-fsp-boot-inputs.md).
+FEAT block](experiments/05_fmc-fsp-boot-inputs.md#0522-vbios-devinit-table-scan),
+and the tables that do exist are authenticated in Heavy Secure.
 
 ## What I tried
 
@@ -149,12 +161,12 @@ the experiment record with the commands and artifacts.
 | Read firmware memory (GSP, FSP, and SEC2 local memory; RISC-V debug engine) | Local memory empty or locked to PL3; the debug engine reads the 14.4 MB GSP-RM code segment after a halt, not secure memory or the WPR | Dead or diagnostic | [secure memory](experiments/04_hs-sec2-fsp-memory.md) |
 | Fed the boot firmware bad input (the host-built boot descriptors) | Ten structured error codes, control over where firmware lands in VRAM, authentication enforced | Live input, no exploit | [boot inputs](experiments/05_fmc-fsp-boot-inputs.md) |
 | Hooked suspend/resume (the host-built descriptor and page table) | Page table is plaintext; saved state is encrypted per boot and card | Live structure, no exploit yet | [suspend/resume](experiments/06_sr-resume.md) |
-| Edited the vBIOS and its init tables, including the no-flash loader route | No FEAT address in plaintext, tables authenticated, custom route tops out at PL2 | Dead, static | [vBIOS](experiments/07_plaintext-corpus.md), [devinit](experiments/05_fmc-fsp-boot-inputs.md) |
-| Raced the reset (the PL2-writable window after an FLR) | Window is 1.32 s; the re-lock lands 1.85 s before GSP-RM starts | Dead, measured | [reset window](experiments/01_software-register-writes.md) |
+| Edited the vBIOS and its init tables, including the no-flash loader route | No FEAT address in plaintext, tables authenticated, custom route tops out at PL2 | Dead, static | [vBIOS](experiments/07_plaintext-corpus.md#073-the-vbios-has-no-feat-address), [devinit](experiments/05_fmc-fsp-boot-inputs.md#0522-vbios-devinit-table-scan) |
+| Raced the reset (the PL2-writable window after an FLR) | Window is 1.32 s; the re-lock lands 1.85 s before GSP-RM starts | Dead, measured | [reset window](experiments/01_software-register-writes.md#016-the-post-reset-window-closes-before-gsp-rm) |
 
-[The FMC debug-key search](experiments/07_plaintext-corpus.md) is negative too:
-three known-answer variants and both debug containers over all 16! permutations,
-under five mode variants. No key came out.
+[The FMC debug-key search](experiments/07_plaintext-corpus.md#0710-the-fmc-key-search-comes-back-negative)
+is negative too: three known-answer variants and both debug containers over all
+16! permutations, under five mode variants. No key came out.
 
 Full records, commands, and artifacts are in [the experiment
 files](experiments/) and [the raw log](RAW_EXPERIMENT_LOG.md).
@@ -163,29 +175,41 @@ files](experiments/) and [the raw log](RAW_EXPERIMENT_LOG.md).
 
 The four surfaces I would probe next, in order:
 
-1. **[The suspend/resume page table](experiments/06_sr-resume.md).** On resume,
-   secure firmware walks a three-level table the host builds, before it decrypts
-   the saved state. A malformed entry is the last structural probe. A failed resume
-   hangs with no host log, so this needs a network console or phase markers first.
-2. **[The FSP message framing](experiments/08_assessment-and-cross-checks.md).**
-   The host controls the transmit length, and the reply's task and command identity
-   is not checked. A malformed-length packet is the remaining test.
+1. **[The suspend/resume page
+   table](experiments/06_sr-resume.md#064-the-radix3-is-plaintext-and-fully-mapped).**
+   On resume, secure firmware walks a three-level table the host builds, before
+   it decrypts the saved state. A malformed entry is the last structural probe. A
+   failed resume hangs with no host log, so this needs a network console or phase
+   markers first.
+2. **[The FSP message
+   framing](experiments/08_assessment-and-cross-checks.md#087-static-pass-over-feat-and-fsp).**
+   The host controls the transmit length, and the reply's task and command
+   identity is not checked. A malformed-length packet is the remaining test.
 3. **The two remaining boot-descriptor sizes.** `fbSize` and `nonWprHeapSize` are
-   the layout fields I did not vary ([boot-input
-   experiments](experiments/05_fmc-fsp-boot-inputs.md)). One of them may move the
-   protected region in the other direction.
-4. **[The per-SM context register space](experiments/01_software-register-writes.md).**
+   the layout fields I did not vary ([the `WprMeta` field
+   matrix](experiments/05_fmc-fsp-boot-inputs.md#0511-wprmeta-magic-enforced-verified-accepted)).
+   One of them may move the protected region in the other direction.
+4. **[The per-SM context register
+   space](experiments/01_software-register-writes.md#017-per-context-registers-need-a-caller-owned-channel).**
    The cheap host route is closed. Testing it needs a channel owned by the calling
    driver client, and the GSP may still reject it.
 
-The [RISC-V debug engine](experiments/04_hs-sec2-fsp-memory.md) is no longer on
-this list. A register sweep at the boot-image halt could explain why its memory
-read is gated, but it cannot read the image.
+The [RISC-V debug
+engine](experiments/04_hs-sec2-fsp-memory.md#044-priscv-icd-is-a-live-debug-port)
+is no longer on this list. A register sweep at the boot-image halt could explain
+why its memory read is gated, but it cannot read the image.
 
-**Not viable:** a [GSP-RM bug](experiments/01_software-register-writes.md) as a
-write path (PL2 is too late), vBIOS flashing (signed), fuse editing (the boot fuse
-check fails), voltage glitching (no public method), and [entering debug fuse
-state](experiments/07_plaintext-corpus.md) (no retail path).
+**Not viable.**
+
+- A [GSP-RM bug](experiments/01_software-register-writes.md#012-speed-register-write-from-gsp-is-dropped)
+  as a write path. PL2 is too late.
+- [vBIOS flashing](experiments/07_plaintext-corpus.md#073-the-vbios-has-no-feat-address).
+  It is signed.
+- Fuse editing. The boot fuse check fails.
+- Voltage glitching. There is no public method.
+- [Entering debug fuse
+  state](experiments/07_plaintext-corpus.md#071-pl3-components-in-the-driver-package).
+  There is no retail path.
 
 Two different things are missing:
 
