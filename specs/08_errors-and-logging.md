@@ -149,6 +149,8 @@ timeout, separate from decode.
 | `0xBADF4100` | decode/access error | refused GSP `HWCFG2` at `0x1100f4` |
 | `0xBADF5545` | command-ID blocked | FECS command-ID register read |
 | `0xBADF1100` | `FECS_PRI_DECODE` | address not decodable |
+| `0xBADF1301` | `0xBADF13` (not public) | GR space `0x1c8000`–`0x1cbc00` |
+| `0xBADF202B` | `0xBADF20` (not public) | GR space `0x22c000`–`0x22f800` |
 | `0xBADFFFFF` | not public | GSP-master read of the four PRISCV ICD registers |
 
 The low byte also encodes the caller or engine for the blocked/port cases, which
@@ -160,7 +162,8 @@ probes](../experiments/03_fecs-and-gr-context.md#031-live-fecs-fsp-and-sec2-prob
 [the sentinel analysis](../experiments/08_assessment-and-cross-checks.md#089-sentinel-and-raw-function-analysis),
 [the PRISCV split](../experiments/04_hs-sec2-fsp-memory.md#043-priscv-block-is-split-per-master),
 [the live ICD](../experiments/04_hs-sec2-fsp-memory.md#044-priscv-icd-is-a-live-debug-port),
-and [the debugger test](../experiments/01_software-register-writes.md#018-the-debugger-class-reads-the-bank-but-cannot-write-it).
+[the debugger test](../experiments/01_software-register-writes.md#018-the-debugger-class-reads-the-bank-but-cannot-write-it),
+and [the falcon and GR-window probe](../experiments/11_falcon-and-gr-window-probe.md#111-the-falcon-blocks-answer-or-refuse).
 
 Other sentinels and data markers:
 

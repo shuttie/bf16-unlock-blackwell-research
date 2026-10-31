@@ -177,7 +177,7 @@ the experiment record with the commands and artifacts.
 
 | What I did | Result | Status | Records |
 |---|---|---|---|
-| Wrote the speed registers from the host window, from GSP firmware, and through the CUDA debugger class; tried the [fuse shadow](specs/03_register-map.md#fuse-and-otp) and the graphics engine's [rate register](specs/02_privilege-and-rate-control.md#the-rm-getter-and-the-host-view) | Success returned, writes dropped; the rate register is writable but reasserted and inert; the debugger class reads the bank but cannot write it | Dead, measured | [register writes](experiments/01_software-register-writes.md), [debugger class](experiments/10_debugger-class-and-fecs-ucode.md) |
+| Wrote the speed registers from the host window, from GSP firmware, and through the CUDA debugger class; tried the [fuse shadow](specs/03_register-map.md#fuse-and-otp) and the graphics engine's [rate register](specs/02_privilege-and-rate-control.md#the-rm-getter-and-the-host-view); read the falcon blocks | Success returned, writes dropped; the rate register is writable but reasserted and inert; the debugger class reads the bank but cannot write it; the FECS/GPCCS falcon blocks are absent | Dead, measured | [register writes](experiments/01_software-register-writes.md), [debugger class](experiments/10_debugger-class-and-fecs-ucode.md), [falcon probe](experiments/11_falcon-and-gr-window-probe.md) |
 | Used the driver's registry knobs (`RMOverrideSmSpeedSelect*`, `RMDisableFeatureDisablement`) | Parsed and stored, no rate or bank change | Dead, measured | [registry keys](experiments/02_registry-and-static-audit.md) |
 | Poked the GPU command ring ([FECS doorbell](specs/03_register-map.md#fecs) and [graphics engine context buffers](specs/03_register-map.md#sm-and-gr)) | Payloads are addresses and sizes, no selector field | Dead, measured/static | [FECS and context](experiments/03_fecs-and-gr-context.md) |
 | Read firmware memory (GSP, FSP, and SEC2 local memory; [RISC-V debug engine](specs/06_gsp-riscv-and-priscv.md#priscv-register-map)) | Local memory empty or locked to PL3; the debug engine reads the 14.4 MB GSP-RM code segment after a halt, not secure memory or the WPR | Dead or diagnostic | [secure memory](experiments/04_hs-sec2-fsp-memory.md) |
@@ -207,7 +207,9 @@ The cold-boot FMC parser map is measured ([the parser
 group](experiments/09_fmc-cold-boot-parsers.md)): the boot inputs are bounded or
 exact, and the image bytes are authenticated. Next is the suspend/resume
 descriptor and page table, then the FSP framing. The vBIOS app `0x23` tail and
-the per-SM probes follow.
+the per-SM probes follow. The FECS/GPCCS read route is closed: the falcon blocks
+are absent at the documented bases and the GR window the GSP-RM admits is empty
+([the falcon probe](experiments/11_falcon-and-gr-window-probe.md)).
 
 The [RISC-V debug
 engine](experiments/04_hs-sec2-fsp-memory.md#044-priscv-icd-is-a-live-debug-port)

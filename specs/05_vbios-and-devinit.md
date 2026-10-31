@@ -120,20 +120,39 @@ and [the devinit scan](../experiments/05_fmc-fsp-boot-inputs.md#0522-vbios-devin
 | `0x24` | `0x0F` | n/a | n/a | Placeholder; descriptor `0xBADF1100` |
 
 All four real descriptors are version 6, size `0x50`, with the encrypted bit set.
-The bodies begin with encrypted code, entropy 8.0. Only app `0x23` / target `0x0E`
+The `vDesc` word packs the version-available bit at 0, the encrypted bit at 2,
+the descriptor version at 15:8, and the descriptor size at 31:16
+([the table decode](../experiments/11_falcon-and-gr-window-probe.md#113-the-ucode-table-is-the-pmu-lookup-table)).
+The stored size at `+0x04` equals the body length exactly. For the two
+target-`0x01` images the fields at `+0x0c` and `+0x14` sum to that stored size
+(`0x1c800 + 0x5300 = 0x21b00` and `0x5200 + 0x900 = 0x5b00`); app `0x23` and app
+`0x07` add a `0x1000`/`0x1100` block and a fixed `0xa00` above the sum. The field
+names are not public; the sizes are measured.
+
+The bodies are encrypted apart from a small tagged preamble: apps `0x19`, `0x15`,
+and `0x23` start with a plaintext `0x14`-byte-stride block, and app `0x07` starts
+encrypted at byte zero. Only app `0x23` / target `0x0E`
 has a plaintext tail: 64 KiB of encrypted code at `0xB780C`–`0xC780C`, a ~2 KiB
 header at `0xC780C`–`0xC8000`, then plaintext data at `0xC8000`–`0xD5A0C` with
 entropy 2–3. That data contains `0xFFFFFB8F` (4 hits), `0xFFFFFBFF` (7),
 `0xFFFFFF8F` (9), `0xFFFFFF0F` (7), and a large `0xBADF5040` poison field. See
 [the devinit scan](../experiments/05_fmc-fsp-boot-inputs.md#0522-vbios-devinit-table-scan).
 
+The table is the PMU lookup table. BIT token `0x70` points at a
+`BIT_FALCON_DATA` structure that holds the table pointer, and the Linux
+nova-core FWSEC parser walks it by application ID; in its only worked entry the
+target `0x01` is PMU. On GB202 the two target-`0x01` images are therefore a
+PMU-family pair, not FECS/GPCCS, and the earlier FECS/GPCCS reading of that pair
+is withdrawn ([the table
+decode](../experiments/11_falcon-and-gr-window-probe.md#113-the-ucode-table-is-the-pmu-lookup-table)).
+
 The driver looks for FWSEC app IDs `0x05`, `0x45`, `0x85`; none is present. That
 is consistent with the FSP-based boot chain ([the vBIOS
 dump](../experiments/07_plaintext-corpus.md#073-the-vbios-has-no-feat-address)).
 
-Target IDs are not publicly mapped. The PLM-bearing image is consistent with the
-SEC2 class identified in public CMP 170HX work, but "app `0x23` = SEC2" is
-carried over by analogy, not a confirmed identification.
+The other targets are not publicly mapped. "App `0x23` = SEC2" is withdrawn with
+the FECS reading: no public source maps target `0x0E`, and the image is
+unidentified.
 
 ## What the plaintext layer does not contain
 
@@ -170,8 +189,8 @@ The PLM values live only in app `0x23` / target `0x0E`:
 
 Two tail tables at `0xE8300` and `0xE9400` hold `0x0884CB8F`, `0x0884CBCF`,
 `0xFFFFFB8F`, and `0x0085CB8F`, but no addresses. App `0x23`'s code is
-byte-identical across the two cards; its data differs by 65 bytes of per-card
-calibration ([the devinit
+byte-identical across the two cards; its data differs in 118 bytes across 57
+dwords of per-card calibration ([the devinit
 scan](../experiments/05_fmc-fsp-boot-inputs.md#0522-vbios-devinit-table-scan)).
 
 ## Devinit authentication

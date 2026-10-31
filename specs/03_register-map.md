@@ -318,6 +318,11 @@ The block is a sparse GR/FECS register/PLM block, not the Falcon core. 789 of
 sentinels; implemented registers begin around `0x409400`. See [the live FECS
 probe](../experiments/03_fecs-and-gr-context.md#031-live-fecs-fsp-and-sec2-probes).
 
+The twelve standard FALCON offsets at this base (`0x000`, `0x004`, `0x040`,
+`0x0f0`, `0x0f4`, `0x100`, `0x104`, `0x10c`, `0x198`, `0x19c`, `0x3c0`, `0x40c`)
+return `0xBADF5040` except `0x40940c = 0x7ff`, so the block is not a falcon core
+([the falcon probe](../experiments/11_falcon-and-gr-window-probe.md#111-the-falcon-blocks-answer-or-refuse)).
+
 | Offset | Name | Value / note |
 |---|---|---|
 | `0x00409600` / `624` / `65c` / `660` / `688` / `6d0` / `438` | FECS PLMs | `0x409660 = 0xfffffbef`; `0x409688 = 0xffffffcf`; `0x409438 = 0xffffffef`; `0x4096d0 = 0xffffffff`; writes dropped |
@@ -327,7 +332,9 @@ probe](../experiments/03_fecs-and-gr-context.md#031-live-fecs-fsp-and-sec2-probe
 | `0x00409504` | command ID | `0xBADF5545`; read-blocked (PRI `0xBADF55`) |
 | `0x00409700`–`784` | adjacent config | `0x30`, `0x40001010`, `0x8097cbff`, `0x658bba81`, … under the open `0x4096d0` PLM |
 | `0x00409800` | command status/payload | **GSP-writable**; polled at `0x9800 + 4*param` |
-| `0x00409b00` / `04` / `b78` | DP/companion readout | `0x007e0f0a` / `0x007e0f0a` / `0` |
+| `0x00409b00` / `04` | DP/companion readout | `0x007e0f0a` in the first probe; `0x80000130` through the debugger class later; state-dependent |
+| `0x00409b74` / `b7c` | implemented | `0xe8` / `0xfffffbff`, PLM-shaped |
+| `0x00409b78` | implemented | `0` |
 
 Probe summary:
 
@@ -339,7 +346,7 @@ Probe summary:
 | `0x409438` | `0xffffffef` | `0xffffffef` | PLM: read all / write L1–L3, source bit 10 set |
 | `0x4096d0` | `0xffffffff` | `0xffffffff` | read/write all |
 | **`0x409800`** | `1` | `1` | GSP-writable doorbell/status |
-| `0x409b00` / `04` | `0x007e0f0a` | `0x007e0f0a` | DP/companion readout pair |
+| `0x409b00` / `04` | `0x007e0f0a` | `0x007e0f0a` | DP/companion readout pair; a later debugger read returned `0x80000130` |
 | `0x409b78` / `0x409638` | `0` / `5` | `0` / `5` | implemented |
 
 The `0x409800` write lands because it sits under the fully open `0x4096d0` block;
@@ -382,6 +389,20 @@ analysis](../experiments/08_assessment-and-cross-checks.md#089-sentinel-and-raw-
 so the register is in the FECS/GR privilege space, not the FEAT bank. The exact
 function is still open.
 
+### GR window at 0x140000
+
+The GSP-RM `gr_fecs` register filter admits `0x409b00`, `0x409b78`, and the
+`0x140000`–`0x17ffff` range. The window is empty apart from a `0x10` marker at
+each `0x2000` page start and a `0x100`-byte header at `0x140000`: `0x10`,
+`0x70`, `0xc840`, `0x44`, two `0x49a40a0a`/`0xff053977` pairs, then
+`0xffffffff` and `0x40000099`. The page at `0x17f000` is all zero. See [the GR
+window probe](../experiments/11_falcon-and-gr-window-probe.md#112-the-admitted-gr-window-is-empty).
+
+Above the window, `0x1c0000 = 0xffffff8f`. The ranges `0x1c8000`–`0x1cbc00` and
+`0x22c000`–`0x22f800` return the decode markers `0xbadf1301` and `0xbadf202b`,
+and `0x1f2000`–`0x1f3c00` holds constants including `0x8fc36009` and
+`0xecc36007`, followed by eight `0xffffffff` pages.
+
 ## GSP Falcon
 
 Block `0x110000`–`0x110d4c`.
@@ -399,6 +420,11 @@ Block `0x110000`–`0x110d4c`.
 | `0x00110abc` | EMEM geometry | `0x20` → 32 × 256 B = 8 KB |
 | `0x00110ac0`–`0x110afc` | `EMEMC/D(0..7)` | 8 KB window; all zero at runtime |
 | `0x00110b84` | GSP PLM | `0xffffff8f`; read all / write L3 only |
+
+The debugger class reads `0x1100f0 = 0xf00` and `HWCFG2 = 0x818787f7`, and gets
+`0xBADF5610` from `CPUCTL`, `BOOTVEC`, `DMACTL`, and `MAILBOX_TEST`. The core
+control block stays host-unreadable ([the falcon
+probe](../experiments/11_falcon-and-gr-window-probe.md#111-the-falcon-blocks-answer-or-refuse)).
 
 The Falcon block ends at `0x110d4c`; `0x110d50`–`0x110ffc` is unimplemented.
 The PRISCV block starts at `0x111004` ([the PRISCV
@@ -498,6 +524,11 @@ test](../experiments/04_hs-sec2-fsp-memory.md#045-boot-window-icd-route-is-block
 | `0x008f2ac0` / `c4` | PFSP EMEM ch0 | MCTP/NVDM transport; host-driven |
 | `0x008f2ac8`–`2afc` | PFSP EMEM ch1–7 | host: ch4–7 `0xBADF5720`, ch1–3 zero/`0xdead5ed0`; GSP: ch1/2/4/6/7 `0xBADF5723`, ch3/5 zero/`0xdead5ed0` |
 
+The debugger class reads `HWCFG2 = 0x8182a721`, `ENGINE_RESET = 0x200`, and
+`MAILBOX0 = 0`; the standard `CPUCTL`, `BOOTVEC`, `DMACTL`, and `MAILBOX_TEST`
+offsets return `0xBADF5620` ([the falcon
+probe](../experiments/11_falcon-and-gr-window-probe.md#111-the-falcon-blocks-answer-or-refuse)).
+
 The FSP command surface and the boot inputs that reach it are in
 [boot chain](../specs/01_boot-chain.md). The core EMEM port is only readable as the
 firmware-selected word per channel; the pointer cannot be moved ([the FSP EMEM
@@ -514,6 +545,11 @@ Block `0x840000`–`0x840fff`.
 | `0x008403c4` | SEC2 PLM | `0x00000b0f` (read all / write none) |
 | `0x00840ac0` / `ac4` | EMEM | `0x02000040` / `0`; empty |
 
+The debugger class reads `CPUCTL = 0x10` (halted), `MAILBOX0 = 0xd8693000`, and
+`ENGINE_RESET = 0x200`; `BOOTVEC` and `DMACTL` return `0xBADF5723`, so the boot
+vector stays blocked ([the falcon
+probe](../experiments/11_falcon-and-gr-window-probe.md#111-the-falcon-blocks-answer-or-refuse)).
+
 The SEC2 image that carried the older stack overflow does not ship for GB20x
 ([the shipped
 components](../experiments/07_plaintext-corpus.md#071-pl3-components-in-the-driver-package));
@@ -525,6 +561,10 @@ the residual surface is in [boot chain](../specs/01_boot-chain.md).
 |---|---|---|
 | `0x0010a000` | PMU guess | all `0xBADF5040`; wrong base |
 | `0x008aa374` / `378` | OOBHUB CMS2 indirect read | 448/8192 nonzero, repeating 128-dword block |
+
+The debugger class reads all twelve standard FALCON offsets at `0x10a000` as
+`0xBADF5040`, confirming the base is wrong ([the falcon
+probe](../experiments/11_falcon-and-gr-window-probe.md#111-the-falcon-blocks-answer-or-refuse)).
 
 The PMU devinit is the leading candidate for the pre-lock FEAT writes, but its
 BAR0 base is not identified; that link is an analogy to Ada/Ampere. The writer
@@ -549,6 +589,8 @@ analysis](../experiments/08_assessment-and-cross-checks.md#089-sentinel-and-raw-
 | `0xBADF4100` | `0xBADF41` PRI decode/access error | refused access to GSP `HWCFG2` `0x1100f4` |
 | `0xBADF5545` | `0xBADF55` (not public) | FECS command-ID register read-blocked |
 | `0xBADF1100` | `0xBADF11` `FECS_PRI_DECODE` | address not decodable |
+| `0xBADF1301` | `0xBADF13` (not public) | GR space `0x1c8000`–`0x1cbc00` |
+| `0xBADF202B` | `0xBADF20` (not public) | GR space `0x22c000`–`0x22f800` |
 | `0xBADFFFFF` | `0xBADFFF` (not public) | GSP-master read of the four PRISCV ICD registers; the host reads `0` there |
 
 Three failure classes are distinguishable: decode (`0xBADF11xx`, `0xBADF41xx`),

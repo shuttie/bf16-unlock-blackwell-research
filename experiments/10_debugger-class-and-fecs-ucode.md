@@ -1,4 +1,4 @@
-# The debugger class and the FECS ucode: what the host can read
+# The debugger class and the vBIOS ucode: what the host can read
 
 ## Summary
 
@@ -12,7 +12,7 @@
 - The FEAT read and the dropped write are in [the register-write
   group](../experiments/01_software-register-writes.md#018-the-debugger-class-reads-the-bank-but-cannot-write-it).
   This group covers the class exposure, the spaces the RM path could not read,
-  and the vBIOS FECS/GPCCS bodies.
+  and the vBIOS ucode bodies.
 
 **What it found.**
 
@@ -28,10 +28,10 @@
   the refusal
   [`0xbadf5128`](../specs/08_errors-and-logging.md#data-sentinels-and-bad-reads)
   ([the same record](#102-the-context-and-descriptor-spaces-read)).
-- The four vBIOS bodies are extracted. The two target-`0x01` bodies share a
-  plaintext FUC header and differ at the `+0x08` field (the likely code size);
-  the target-`0x0E` body carries the PLM data; the code is encrypted
-  ([the bodies](#103-the-vbios-fecsgpccs-bodies)).
+- The four vBIOS bodies are extracted. All four use a version-6, `0x50`-byte
+  descriptor; the two target-`0x01` bodies share a plaintext preamble, and the
+  target-`0x0E` body carries the PLM data. The code is encrypted
+  ([the bodies](#103-the-vbios-ucode-bodies)).
 
 **What it did not find.**
 
@@ -42,8 +42,10 @@
 - No Heavy Secure memory read. The FSP and GSP apertures return the same
   sentinels as the host path
   ([the sentinels](../specs/08_errors-and-logging.md#data-sentinels-and-bad-reads)).
-- No FECS/GPCCS plaintext. The FUC5 field layout and the app/target-to-loader
-  map are open ([the bodies](#103-the-vbios-fecsgpccs-bodies)).
+- No FECS/GPCCS plaintext, and no FECS/GPCCS identification: the vBIOS table is
+  the PMU lookup table and target `0x01` is PMU
+  ([the table
+  correction](../experiments/11_falcon-and-gr-window-probe.md#113-the-ucode-table-is-the-pmu-lookup-table)).
 - No selector copy in the GR-context space; the `0x504204` write remains inert
   ([the context and descriptor
   spaces](#102-the-context-and-descriptor-spaces-read)).
@@ -54,7 +56,7 @@
 |---|---|---|
 | 10.1 | [The class is exposed and allocatable](#101-the-class-is-exposed-and-allocatable) | `0x83de` in the 117-class list |
 | 10.2 | [The context and descriptor spaces read](#102-the-context-and-descriptor-spaces-read) | `0x504xxx` and `0x137000` live |
-| 10.3 | [The vBIOS FECS/GPCCS bodies](#103-the-vbios-fecsgpccs-bodies) | FUC headers, encrypted code |
+| 10.3 | [The vBIOS ucode bodies](#103-the-vbios-ucode-bodies) | v6 descriptors, encrypted code |
 
 ## 10.1 The class is exposed and allocatable
 
@@ -230,24 +232,26 @@ refused, and the record pairs it with `0x14252215`
     rejection](../experiments/01_software-register-writes.md#017-per-context-registers-need-a-caller-owned-channel).
   - [The FEAT read and
     write](../experiments/01_software-register-writes.md#018-the-debugger-class-reads-the-bank-but-cannot-write-it).
-  - [The FECS bodies](#103-the-vbios-fecsgpccs-bodies).
+  - [The ucode bodies](#103-the-vbios-ucode-bodies).
+  - [The falcon blocks](../experiments/11_falcon-and-gr-window-probe.md#111-the-falcon-blocks-answer-or-refuse).
+  - [The GR window](../experiments/11_falcon-and-gr-window-probe.md#112-the-admitted-gr-window-is-empty).
 - **Open question:** what descriptor `0x137200` belongs to, and what the
-  `0x30`-byte entry pattern enumerates; the FECS ucode should name both.
+  `0x30`-byte entry pattern enumerates; the GR ucode should name both.
 
-## 10.3 The vBIOS FECS/GPCCS bodies
+## 10.3 The vBIOS ucode bodies
 
-**Question.** Which vBIOS microcode bodies are the FECS/GPCCS consumer, and what
-do their headers expose?
+**Question.** Which vBIOS microcode bodies does the table carry, and what do
+their headers expose?
 
 **Why.**
 
-- The vBIOS carries four encrypted ucode images, the likely FECS/GPCCS consumer
-  ([the microcode table](../specs/05_vbios-and-devinit.md#microcode-table)).
+- The vBIOS carries four encrypted ucode images, and the consumer was assumed to
+  be FECS/GPCCS ([the microcode table](../specs/05_vbios-and-devinit.md#microcode-table)).
 - The FMC key search targeted the FMC and the SEC2 booter, not these bodies
   ([the key
   search](../experiments/07_plaintext-corpus.md#0710-the-fmc-key-search-comes-back-negative)).
 - What it would give: the shapes to map to the GSP-RM loaders and the first
-  structural test of the FUC5 container.
+  structural test of the ucode container.
 
 **Method.**
 
@@ -290,19 +294,23 @@ high-entropy. The 1 MiB dump is the image the table describes.
 
 **Result.**
 
-- **Answer:** the two target-`0x01` bodies are the likely FECS/GPCCS pair, and
-  their headers are plaintext; the code is encrypted.
+- **Answer:** the two target-`0x01` bodies are one image family with plaintext
+  headers, and the code is encrypted. The FECS/GPCCS identification is
+  withdrawn; the table decode places the pair in the PMU family
+  ([the table
+  correction](../experiments/11_falcon-and-gr-window-probe.md#113-the-ucode-table-is-the-pmu-lookup-table)).
 - **What we learned:**
-  - `app19` and `app15` share the FUC header (`01 00 35 00 a7 47 00 00`) and
+  - `app19` and `app15` share the header (`01 00 35 00 a7 47 00 00`) and
     differ mainly at `+0x08`, the likely code-size field.
   - `app23` is the PLM-bearing image; its plaintext data tail matches the
     documented PLM values.
   - `app07` has no plaintext header.
-  - The FUC header is version 1, header size `0x35`, with `0x47a7` and the
-    code/data fields; the exact FUC5 field layout is not in the open source.
+  - The descriptor is version 6 with a `0x50`-byte header, newer than the v2/v3
+    the open driver parses; the field names are not public.
 - **Related:**
   - [The microcode table](../specs/05_vbios-and-devinit.md#microcode-table).
   - [The key
     search](../experiments/07_plaintext-corpus.md#0710-the-fmc-key-search-comes-back-negative).
-- **Open question:** the app/target-to-loader map in the GSP-RM, and whether the
-  encrypted bodies share the FMC key family.
+  - [The ucode table correction](../experiments/11_falcon-and-gr-window-probe.md#113-the-ucode-table-is-the-pmu-lookup-table).
+- **Open question:** the engine behind target `0x0E`, and whether the encrypted
+  bodies share the FMC key family.

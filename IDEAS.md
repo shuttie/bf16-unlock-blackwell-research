@@ -30,10 +30,13 @@
 - The CUDA debugger class is exposed and reads the FEAT bank, the GR context,
   and the `0x137000` block; its FEAT write drops like the host and GSP paths
   ([the debugger group](experiments/10_debugger-class-and-fecs-ucode.md)).
-- The vBIOS FECS/GPCCS bodies are extracted; the headers are plaintext and the
-  code is encrypted. The app/target-to-loader map and the FUC5 decode remain
-  ([the FECS
-  bodies](experiments/10_debugger-class-and-fecs-ucode.md#103-the-vbios-fecsgpccs-bodies)).
+- The FECS, GPCCS, and PMU falcon bases return decode or not-implemented
+  markers, and the GR window the GSP-RM admits is empty. The host has no FECS
+  code or state window ([the falcon probe](experiments/11_falcon-and-gr-window-probe.md)).
+- The vBIOS table is the PMU lookup table, so the two target-`0x01` images are
+  not FECS/GPCCS. All four descriptors are version 6 and the code is encrypted
+  ([the table
+  decode](experiments/11_falcon-and-gr-window-probe.md#113-the-ucode-table-is-the-pmu-lookup-table)).
 - The remaining PL3 parsers are the [suspend/resume
   descriptor](#sr-descriptor-and-page-table) and the [FSP
   framing](#fsp-framing). The SR harness now has a relative radix3 address and
@@ -63,7 +66,7 @@ cost.
 | C15 | [Readout decode](#readout-decode) | What are the un-decoded readout bits? | offline | May change the target |
 | C03 | [vBIOS app 0x23](#vbios-app-0x23) | Is the plaintext data tail a devinit template? | offline decode | Only direct-unlock candidate |
 | C04 | [Override payload](#override-payload-format) | Does the SS0/SS1 override set full rate? | 1 PRO cold-boot series | Validates a writer, not a route |
-| C18 | [vBIOS ucode corpus](#vbios-ucode-corpus) | Can the extracted FECS/GPCCS bodies be decoded? | weeks | Answers the rate semantics |
+| C18 | [vBIOS ucode corpus](#vbios-ucode-corpus) | Is any vBIOS body GR ucode? | weeks | Rarely decisive |
 
 ## Measured: the cold-boot parser map
 
@@ -407,25 +410,24 @@ cold-boot series into a future PRO rental; do not plan a run around it.
 
 ## vBIOS ucode corpus
 
-**Where it comes from.** The vBIOS carries four encrypted ucode images, the
-likely FECS/GPCCS (graphics front-end and context-switch microcode) consumer
-([the microcode table](specs/05_vbios-and-devinit.md#microcode-table)). The FMC
-key search targeted the FMC and the SEC2 booter, not these
+**Where it comes from.** The vBIOS carries four encrypted ucode images. The
+table is the PMU lookup table and target `0x01` is PMU in the only public
+mapping, so the two target-`0x01` bodies are a PMU-family pair, not FECS/GPCCS
+([the table
+decode](experiments/11_falcon-and-gr-window-probe.md#113-the-ucode-table-is-the-pmu-lookup-table)).
+All four descriptors are version 6, `0x50` bytes. The stored size equals the body
+length, and the two target-`0x01` images share a plaintext preamble
+([the bodies](experiments/10_debugger-class-and-fecs-ucode.md#103-the-vbios-ucode-bodies)).
+The FMC key search targeted the FMC and the SEC2 booter, not these
 ([the key search](experiments/07_plaintext-corpus.md#0710-the-fmc-key-search-comes-back-negative)).
-The four bodies are extracted. The 1 MiB flash is the linear image; the 2 MiB
-aperture is not. The two target-`0x01` bodies share a plaintext FUC header and
-differ at the likely code-size field; the target-`0x0E` body carries the PLM
-data
-([the FECS
-bodies](experiments/10_debugger-class-and-fecs-ucode.md#103-the-vbios-fecsgpccs-bodies)).
 
-**Try.** The bodies are extracted; map the app/target IDs to the loaders in the
-GSP-RM, check whether the bodies share the FMC key family, and if they are
-Falcon FUC5, build a Falcon parcels oracle
-([the FMC tools](tools/fmc-tools/)).
+**Try.** Identify target `0x0E`, find the GSP-RM loader that consumes the table,
+and check whether any vBIOS entry is GR ucode at all. Check the encrypted bodies
+against the FMC key family. The Falcon parcels oracle only matters after a
+FECS/GPCCS consumer is named ([the FMC tools](tools/fmc-tools/)).
 
-**Decision.** A decoded consumer answers what the selector does and whether a
-command sets it. High effort, no hardware.
+**Decision.** A named FECS/GPCCS consumer reopens the decode. A PMU/FSP-only
+table closes the corpus for this route. High effort, no hardware.
 
 ## Closed, do not retry
 
@@ -449,6 +451,11 @@ command sets it. High effort, no hardware.
 - CUDA debugger-class FEAT writes. The class reads the bank and the write drops
   ([the debugger
   test](experiments/01_software-register-writes.md#018-the-debugger-class-reads-the-bank-but-cannot-write-it)).
+- Reading FECS/GPCCS code or state from the host. The FECS, GPCCS, and PMU falcon
+  bases return decode or not-implemented markers, the security engines block
+  their boot vectors, and the GR window the GSP-RM admits is empty ([the falcon
+  probe](experiments/11_falcon-and-gr-window-probe.md), [the
+  window](experiments/11_falcon-and-gr-window-probe.md#112-the-admitted-gr-window-is-empty)).
 - The `0x137200` lead. It is a privilege-protected FECS/GR register
   (`0xc120048a` in a `0x30`-byte entry pattern); the FECS log pairs it with
   `0x14252215` and the refusal `0xbadf5128` ([the descriptor

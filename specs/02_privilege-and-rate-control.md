@@ -341,6 +341,9 @@ decode](../experiments/01_software-register-writes.md#015-the-permission-mask-ad
   not selectors.
 - [`SM_ISSUE_RATE_MODIFIER` is writable but reasserted and
   inert](../experiments/01_software-register-writes.md#014-the-fuse-shadow-and-the-inert-modifier).
+- The FECS and GPCCS falcon blocks are not host-readable: their documented bases
+  return decode markers, and the GR window the GSP-RM admits is empty
+  ([the falcon probe](../experiments/11_falcon-and-gr-window-probe.md)).
 - Two PRO 6000s read `FEAT_READOUT_1 = 0` with every arithmetic speed fuse at 0,
   and one card's FP32-accumulate rate equals its FP16-accumulate rate
   ([the reference dump](../experiments/08_assessment-and-cross-checks.md#0810-an-rtx-pro-6000-reference-dump)).
