@@ -21,8 +21,12 @@
 - The [permission mask](../specs/02_privilege-and-rate-control.md#privilege-levels-and-the-plm)
   [admits writes from PL3 only](#015-the-permission-mask-admits-pl3-writes-only);
   the [PL2 drop is silent](#012-speed-register-write-from-gsp-is-dropped).
+- The [mask field layout](#015-the-permission-mask-admits-pl3-writes-only) matches
+  NVIDIA's public Falcon v4 header, including the level-3-only write constant.
 - The FUSE shadow and the rate modifier
   [do not accept a useful write](#014-the-fuse-shadow-and-the-inert-modifier).
+- The [CUDA debugger class](#018-the-debugger-class-reads-the-bank-but-cannot-write-it)
+  reads the bank and its FEAT write drops too.
 - The [post-reset window closes too early](#016-the-post-reset-window-closes-before-gsp-rm),
   and the [per-context types are rejected](#017-per-context-registers-need-a-caller-owned-channel).
 
@@ -30,6 +34,8 @@
 
 - No software path
   [writes the selector](#012-speed-register-write-from-gsp-is-dropped).
+- No debugger-class write path. The debug op reads the bank and the write is
+  [dropped](#018-the-debugger-class-reads-the-bank-but-cannot-write-it).
 - The old route reaches [`SS0`/`SS1`](../specs/03_register-map.md#ss0-and-ss1) from a boot image at PL3, and
   [that is still the only route](#015-the-permission-mask-admits-pl3-writes-only).
 
@@ -44,6 +50,7 @@
 | 01.5 | [The permission mask admits PL3 writes only](#015-the-permission-mask-admits-pl3-writes-only) | Write gate is PL3-only |
 | 01.6 | [The post-reset window closes before GSP-RM](#016-the-post-reset-window-closes-before-gsp-rm) | Window ends before GSP-RM exists |
 | 01.7 | [Per-context registers need a caller-owned channel](#017-per-context-registers-need-a-caller-owned-channel) | Context route closed at PL0 |
+| 01.8 | [The debugger class reads the bank, not writes](#018-the-debugger-class-reads-the-bank-but-cannot-write-it) | Read matches; write dropped |
 
 ## 01.1 First register write hits a crashed GSP
 
@@ -187,6 +194,11 @@ and the register did not move.
   - The FEAT register reads back `0x21240001`, unchanged.
   - The drop is silent: [`regStatus = SUCCESS`](../specs/08_errors-and-logging.md#nv-status-codes)
     cannot distinguish applied from dropped; only the readback can.
+  - The public [`GPU_EXEC_REG_OPS` header](https://github.com/NVIDIA/open-gpu-kernel-modules/blob/main/src/common/sdk/nvidia/inc/ctrl/ctrl2080/ctrl2080gpu.h)
+    defines a per-op `regStatus` and a `NOACCESS` bit, and the
+    [register-op implementation](https://github.com/NVIDIA/open-gpu-kernel-modules/blob/main/src/nvidia/src/kernel/gpu/subdevice/subdevice_ctrl_gpu_regops.c)
+    validates the offset before execution. A `SUCCESS` status with an unchanged
+    readback places the drop below the ioctl, in the register path.
   - The negative/positive control pair and the readback rule are the method later
     register claims use.
   - The test wrote 0, not the [`0x88888888`](../specs/02_privilege-and-rate-control.md#selector-encoding) payload. `SS0 = 0` clears every enable
@@ -430,8 +442,15 @@ Ada comparison            = 0xffffff8f
 - No removed source and no hidden `[23:8]` source-enable field. The source-enable
   field is `[31:12]` and is fully populated.
 - Bit 10 is `SOURCE_READ_CONTROL`, a read-side control, not a writer.
-- The low byte matches Falcon v4 exactly; the fields above it are applied by
-  analogy.
+- The field layout matches NVIDIA's public Falcon v4 register header, including
+  `WRITE_PROTECTION_ONLY_LEVEL3_ENABLED 0x00000008` and
+  `SOURCE_ENABLE_ALL_SOURCES_ENABLED 0x000fffff`
+  ([dev_falcon_v4.h](https://github.com/NVIDIA/open-gpu-kernel-modules/blob/main/src/common/inc/swref/published/nvswitch/ls10/dev_falcon_v4.h)).
+  The same header defines `RESET_PRIV_LEVEL_MASK` at Falcon `0x3c4` with the same
+  layout, which is the `0x00000f00` read in
+  [the post-reset window](#016-the-post-reset-window-closes-before-gsp-rm).
+- The header match does not prove the FEAT bank is a Falcon PLM, because the
+  block is not a Falcon register file. It does remove the field-name guess.
 - **Related:**
   - The [PL2 write test](#012-speed-register-write-from-gsp-is-dropped) sees this
     drop.
@@ -617,4 +636,96 @@ start.
 - **Open question:** would a channel owned by the calling client succeed? Testing
   it needs a mini RM client (VA space, GPFIFO, UserD, bind/schedule) or a kernel
   hook; the GSP may still reject it.
+
+## 01.8 The debugger class reads the bank but cannot write it
+
+**Question.** Can the CUDA debugger class (`GT200_DEBUGGER`, `0x83de`) write a
+FEAT-bank word from the host?
+
+**Why.**
+
+- The register-op control and the GSP both drop the write. The debugger class is
+  the last host-facing object with a register-op command, and the CUDA driver
+  creates one under the device at context creation.
+- A debug class that bypassed the FEAT PLM would be a PL0 write path without an
+  exploit.
+- What it would give: a host write path, or proof the PLM gates the bank below
+  the debug class.
+
+**Method.**
+
+- Tool: an `LD_PRELOAD` hook inside a CUDA process, issuing
+  `NV83DE_CTRL_CMD_DEBUG_EXEC_REG_OPS` (`0x83de031d`) to the debugger object the
+  driver creates at `cuCtxCreate`.
+- Target: `41:00.0` (device 0), idle, stock driver.
+- Steps:
+  - Confirm `GT200_DEBUGGER` is in the GB202 class list (117 classes). The
+    driver's debugger object has `hAppClient` = the CUDA client,
+    `hClass3dObject` = a `BLACKWELL_COMPUTE_B` (`0xcec0`) handle, and the device
+    as parent.
+  - Read `PMC_BOOT_0`, `FEAT_OVR_PLM`, `READOUT_0`, `READOUT_1`, `SS0`, `SS1`,
+    `FUSE_SS_FMLA32`, and `FUSE_SS_PLM` through the debug op.
+  - Write `FEAT_OVR_QUADRO` (`0x823808`) with bit 0 flipped, then read it back.
+  - Sweep `0x504000`–`0x5042ff` and the `0x137000` block read-only through the
+    same path.
+
+Args used:
+
+```text
+NV83DE_CTRL_CMD_DEBUG_EXEC_REG_OPS  0x83de031d
+read   00000000 00823804 00823814 00823818 0082381c 00823820 008207d8 008200fc
+write  00823808  bit 0
+sweep  00504000..005042ff  00137000..00137fff
+```
+
+**Observed data.** The read path matches the BAR0 and GSP values:
+
+```text
+PMC_BOOT_0       0x1b2000a1
+FEAT_OVR_PLM     0xfffffb8f
+READOUT_0        0x00000233
+READOUT_1        0x00c36180
+SS0              0x21265043
+SS1              0x00000006
+FUSE_SS_FMLA32   3
+FUSE_SS_PLM      0xfffffbff
+```
+
+The write returned the success path and the readback stayed `0x01000280`:
+
+```text
+WRITE   0x00823808 bit 0   RM status=0  regStatus=0
+READBACK 0x00823808        = 0x01000280   (unchanged)
+```
+
+The GR-context sweep found no FEAT-selector mirror. `0x504204` is the inert
+rate register at `5`; `0x504100` is a PLM `0xffffffcf`; `0x504180`–`0x5041fc`
+return `0xbadf1002`. The `0x137000` block reads as a `0x30`-stride table, with
+`0x137200 = 0xc120048a`. The FECS log record `0x20471930` shows a refused PL2
+attempt at `0x137200` with `0xbadf5128`
+([the sentinel analysis](../experiments/08_assessment-and-cross-checks.md#089-sentinel-and-raw-function-analysis)).
+
+**Result.**
+
+- **Answer:** the debugger class reads the bank and the write is dropped. It is
+  a read-only observability path, not a FEAT writer.
+- **What we learned:**
+  - The debug class resolves the same bank and returns the stock values, so it
+    is a fourth read path alongside BAR0, the GSP, and the driver's cached getter.
+  - A benign FEAT write returns the success path and the PLM drops it, exactly
+    like [the host and GSP writes](#012-speed-register-write-from-gsp-is-dropped).
+    The gate sits below the debug class.
+  - The write was to `FEAT_OVR_QUADRO`, not `SS0`; the result applies to the
+    bank, not to the selector alone.
+  - `0x137200` is a privilege-protected FECS/GR register, not a FEAT word. That
+    closes the free lead the FECS log record raised.
+- **Related:**
+  - The [GSP write drop](#012-speed-register-write-from-gsp-is-dropped) is the
+    same behavior through a different master.
+  - The [bank-wide gate](#013-the-whole-feat-bank-shares-one-gate) explains why
+    the benign word drops.
+  - The [PLM decode](#015-the-permission-mask-admits-pl3-writes-only) is the gate.
+- **Open question:** the op is still useful for read-only observation. Whether
+  it exposes other engine blocks, or a write through a different debug
+  subcommand, is untested.
 

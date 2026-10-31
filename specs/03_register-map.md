@@ -49,7 +49,8 @@
   - [Other FEAT words](#other-feat-words)
   - [Cross-part FEAT values](#cross-part-feat-values)
 - [FECS](#fecs): PLMs and the `0x409800` doorbell.
-- [SM and GR](#sm-and-gr): the writable rate modifier.
+- [SM and GR](#sm-and-gr): the writable rate modifier and the `0x137000`
+  privilege block.
 - [GSP Falcon](#gsp-falcon): the Falcon block and its EMEM window.
 - [PRISCV](#priscv): the RISC-V block, its partitions, and the ICD.
 - [FSP](#fsp): the FSP block and the PFSP EMEM channels.
@@ -95,15 +96,16 @@ Block `0x820000`–`0x8207ff`.
 | Offset | Name | Value / note |
 |---|---|---|
 | `0x00820000` | `FUSECTRL` | fuse controller |
-| `0x00820040` | `EN_SW_OVERRIDE` | software override enable |
+| `0x00820040` | `FUSE_EN_SW_OVERRIDE` | software override enable; `1` on consumer Ampere, `0` on A100/170HX; not read on GB202 |
 | `0x0082007c` | `DISABLE_FUSE_PROGRAM` | fuse programming disable |
+| `0x00820084` | `FUSE_DIS_SW_OVR` | `1` on the sampled Ampere parts; not read on GB202 |
 | `0x008200d0`, `d8`, `dc`, `f8` | PLM-shaped | `0xfffffb8f` (read all / write L3) |
 | `0x008200d4`, `e8`, `ec`, `f0` | PLM-shaped | `0xfffffbfc` (read L2–L3 / write all) |
 | `0x008200e0`, `e4`, `f4` | PLM-shaped | `0x00800b8f` (read all / write L3) |
 | **`0x008200fc`** | `FUSE_SS_PLM` (page-0 mask) | **`0xfffffbff`**; reads as write-all, but it is not the effective gate |
 | `0x00820224` | `FUSE_SS_DP` | `0` |
-| `0x0082038c` | `SECURE_FEAT_OVR_QUADRO_WR_SEC` | Quadro secure write |
-| `0x008203f0` | `OPT_FEATURE_FUSES_OVERRIDE_DISABLE` | `0` |
+| `0x0082038c` | `SECURE_FEAT_OVR_QUADRO_WR_SEC` | Quadro secure write; `1` on the sampled Ampere parts; not read on GB202 |
+| `0x008203f0` | `FUSE_FEAT_OVR_DIS` / `OPT_FEATURE_FUSES_OVERRIDE_DISABLE` | `0`; the override is not permanently disabled |
 | `0x0082059c` | `FUSE_SS_FFMA` | `0` |
 | `0x0082074c` | `OPT_SECURE_GSP` / `..._DEBUG_DIS` | `1`; writes dropped from PL0 and PL2 |
 | `0x008207d4` | `FUSE_SS_FMLA16` | `0` |
@@ -117,6 +119,14 @@ Block `0x820000`–`0x8207ff`.
 The fuse shadow is soft-read-only from both PL0 and PL2, even where the PLM says
 otherwise; a PLM value is not a writability oracle. See [the fuse and rate-modifier
 test](../experiments/01_software-register-writes.md#014-the-fuse-shadow-and-the-inert-modifier).
+
+The override-enable fuses were not read on the 5090 or the PRO 6000. On Ampere
+consumer parts `FUSE_EN_SW_OVERRIDE` reads `1`, `FUSE_DIS_SW_OVR` reads `1`, and
+`FUSE_FEAT_OVR_DIS` reads `0`; on A100 and the 170HX `FUSE_EN_SW_OVERRIDE` reads
+`0`. The cross-part survey reads the override path as architecturally available
+but requiring Falcon HS ([the external
+cross-check](../experiments/08_assessment-and-cross-checks.md#0811-the-register-route-is-a-pl3-problem)).
+
 Sentinel `0xBADF510C` clusters at `0x820158`–`0x8201ec`, `0x8204a8`–`0x8204b0`,
 and `0x820578`; page 4 `0x824100`–`0x8241cc` reads a uniform `0x00000002`, and
 `0x8240fc` is a sentinel ([the sentinel
@@ -169,6 +179,10 @@ whole-bank test](../experiments/01_software-register-writes.md#013-the-whole-fea
 the `0x82380c` identity is from [the external
 corpus](../experiments/08_assessment-and-cross-checks.md#085-external-cross-part-register-corpus).
 
+The CUDA debugger class (`GT200_DEBUGGER`, `0x83de`) reads the same words and
+its FEAT write is dropped by the same gate ([the debugger
+test](../experiments/01_software-register-writes.md#018-the-debugger-class-reads-the-bank-but-cannot-write-it)).
+
 The 5090 values above are the stock consumer map. The measured PRO 6000 reads
 the same `0x823800`/`0x823804` PLMs (`0xfffffb8f`) and `0x82380c`
 (`0x00888888`); the words that differ are in [the cross-part
@@ -179,8 +193,13 @@ dump](../experiments/08_assessment-and-cross-checks.md#0810-an-rtx-pro-6000-refe
 
 ### Write gate
 
-`FEAT_OVR_PLM` is the gate for the whole bank. Its low byte is the Falcon v4
-privilege mask; the fields above the low byte are applied by analogy.
+`FEAT_OVR_PLM` is the gate for the whole bank. The field layout matches NVIDIA's
+public Falcon v4 register header, including
+`WRITE_PROTECTION_ONLY_LEVEL3_ENABLED 0x00000008` and
+`SOURCE_ENABLE_ALL_SOURCES_ENABLED 0x000fffff`
+([dev_falcon_v4.h](https://github.com/NVIDIA/open-gpu-kernel-modules/blob/main/src/common/inc/swref/published/nvswitch/ls10/dev_falcon_v4.h)).
+The FEAT block is not a Falcon register file, so the match removes the
+field-name guess without proving the bank is a Falcon PLM.
 
 | Bits | Field | `0xfffffb8f` | Ada `0xffffff8f` |
 |---|---|---|---|
@@ -332,9 +351,16 @@ the [FECS and GR context experiments](../experiments/03_fecs-and-gr-context.md).
 
 | Offset | Name | Value / note |
 |---|---|---|
+| `0x00504100` | GR PLM | `0xffffffcf`; read all / write PL2+PL3 |
+| `0x00504180`–`0x5041fc` | GR window | `0xbadf1002`; FECS PRI timeout |
 | `0x00504204` | `SM_ISSUE_RATE_MODIFIER` | `5`; writable from PL0/PL2, reasserted at context init, inert |
 | `0x00829668` | candidate twin-getter base | `0xBADF1100`; outside the decodable window |
 | `0x00009668` | candidate absolute offset | `0xBADF5040`; decodable, unimplemented |
+
+The debugger-class sweep of `0x504000`–`0x5042ff` found no FEAT-selector mirror.
+`0x504204` is the only rate register and it is inert; `0x504100` is the PLM
+above; `0x504180`–`0x5041fc` return the timeout sentinel ([the debugger
+test](../experiments/01_software-register-writes.md#018-the-debugger-class-reads-the-bank-but-cannot-write-it)).
 
 `SM_ISSUE_RATE_MODIFIER` is the one rate-related register that is genuinely
 writable, but it is reasserted at CUDA context creation and does not change the
@@ -342,6 +368,19 @@ measured rate. See [the fuse and rate-modifier
 test](../experiments/01_software-register-writes.md#014-the-fuse-shadow-and-the-inert-modifier).
 No host or GSP-RM code writes it; the value 5 comes from firmware/devinit or a
 context restore.
+
+### GR privilege block at 0x137000
+
+| Offset | Name | Value / note |
+|---|---|---|
+| `0x000137000` | block | `0x30`-stride table |
+| `0x000137200` | privilege register | `0xc120048a`; PL2 access refused with `0xbadf5128`; not FEAT |
+
+The FECS log record `0x20471930` attempted `0x137200` with `0x14252215` and was
+refused with `0xbadf5128` ([the sentinel
+analysis](../experiments/08_assessment-and-cross-checks.md#089-sentinel-and-raw-function-analysis)),
+so the register is in the FECS/GR privilege space, not the FEAT bank. The exact
+function is still open.
 
 ## GSP Falcon
 
@@ -499,6 +538,7 @@ analysis](../experiments/08_assessment-and-cross-checks.md#089-sentinel-and-raw-
 
 | Value | PRI family | Observed when |
 |---|---|---|
+| `0xBADF1002` | `0xBADF10` `FECS_PRI_TIMEOUT` | GR register access at `0x504180`–`0x5041fc` |
 | `0xBADF5040` | `0xBADF50` `FECS_PRI_CLIENT_ERR` | offset not implemented |
 | `0xBADF5610` | `0xBADF56` (not public) | no such Falcon port (GSP IMEM/DMEM) |
 | `0xBADF5620` | `0xBADF56` (not public) | FSP core port present but inaccessible |
@@ -513,6 +553,7 @@ analysis](../experiments/08_assessment-and-cross-checks.md#089-sentinel-and-raw-
 
 Three failure classes are distinguishable: decode (`0xBADF11xx`, `0xBADF41xx`),
 client error (`0xBADF50xx`, `0xBADF51xx`), and refused/blocked (`0xBADF57xx`).
+`0xBADF1002` is a timeout family, separate from decode.
 The `0xBADF56xx` values and the `0xBADF5720`/`0xBADF5723` pair show that the low
 byte also encodes the caller or engine. `0xBADF51` is a family, not a fuse
 marker: the low byte is `0x0c` at the fuse block and `0x28` at `0x137200`
@@ -526,7 +567,8 @@ The error-code taxonomy is in
 | Block | Experiments | Tool |
 |---|---|---|
 | FUSE / FEAT | [FEAT bank gate](../experiments/01_software-register-writes.md#013-the-whole-feat-bank-shares-one-gate), [fuse and rate modifier](../experiments/01_software-register-writes.md#014-the-fuse-shadow-and-the-inert-modifier), [mask decode](../experiments/01_software-register-writes.md#015-the-permission-mask-admits-pl3-writes-only), [cross-part corpus](../experiments/08_assessment-and-cross-checks.md#085-external-cross-part-register-corpus), [PRO 6000 reference](../experiments/08_assessment-and-cross-checks.md#0810-an-rtx-pro-6000-reference-dump), [FEAT across boots](../experiments/05_fmc-fsp-boot-inputs.md#0520-feat-bank-across-boots-and-flr), [re-lock](../experiments/05_fmc-fsp-boot-inputs.md#0521-plm-re-lock-is-autonomous-devinit) | [Register access](../tools/register-access/), [Direct probe](../tools/direct-probe/), [Issue-rate probe](../tools/issue-rate-probe/) |
-| FECS / SM | [live FECS probe](../experiments/03_fecs-and-gr-context.md#031-live-fecs-fsp-and-sec2-probes), [rate modifier](../experiments/01_software-register-writes.md#014-the-fuse-shadow-and-the-inert-modifier) | [Register access](../tools/register-access/) |
+| FECS / SM | [live FECS probe](../experiments/03_fecs-and-gr-context.md#031-live-fecs-fsp-and-sec2-probes), [rate modifier](../experiments/01_software-register-writes.md#014-the-fuse-shadow-and-the-inert-modifier), [debugger test](../experiments/01_software-register-writes.md#018-the-debugger-class-reads-the-bank-but-cannot-write-it) | [Register access](../tools/register-access/) |
+| Debugger / external | [debugger test](../experiments/01_software-register-writes.md#018-the-debugger-class-reads-the-bank-but-cannot-write-it), [external cross-check](../experiments/08_assessment-and-cross-checks.md#0811-the-register-route-is-a-pl3-problem) | [Register access](../tools/register-access/), offline |
 | GSP Falcon / PRISCV | [GSP EMEM](../experiments/04_hs-sec2-fsp-memory.md#041-gsp-emem-is-real-but-empty), [PRISCV map](../experiments/04_hs-sec2-fsp-memory.md#043-priscv-block-is-split-per-master), [live ICD](../experiments/04_hs-sec2-fsp-memory.md#044-priscv-icd-is-a-live-debug-port), [boot window](../experiments/04_hs-sec2-fsp-memory.md#045-boot-window-icd-route-is-blocked) | [Register access](../tools/register-access/), [Direct probe](../tools/direct-probe/), [Driver harness](../tools/driver-harness/) |
 | FSP / SEC2 | [live FECS/SEC2 probe](../experiments/03_fecs-and-gr-context.md#031-live-fecs-fsp-and-sec2-probes), [FSP EMEM](../experiments/04_hs-sec2-fsp-memory.md#042-fsp-emem-pointer-writes-are-dropped), [boot window](../experiments/04_hs-sec2-fsp-memory.md#045-boot-window-icd-route-is-blocked) | [Register access](../tools/register-access/), [Direct probe](../tools/direct-probe/) |
 | Sentinels | [sentinel analysis](../experiments/08_assessment-and-cross-checks.md#089-sentinel-and-raw-function-analysis) | [GSP-RM tools](../tools/gsp-rm-tools/), [Driver harness](../tools/driver-harness/) |
@@ -551,3 +593,7 @@ The error-code taxonomy is in
   `0x8238b0` (`0x12800541` on the 5090, `0x1c5f331f` and `0x0db4b1c3` on two PRO
   6000s); the real PMU BAR0 base; the 16-byte constant at `0x8f0ab0`; the
   128-dword CMS2 table; whether the SEC2 DMEM is larger than 8 KB or masked.
+- The exact function of `0x137200` is open; the value and the refused PL2 access
+  place it in the FECS/GR privilege block, not the FEAT bank.
+- The override-enable fuses (`0x820040`, `0x820084`, `0x8203f0`) are unread on
+  GB202; their Ampere values are cross-part data.

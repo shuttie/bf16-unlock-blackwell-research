@@ -133,10 +133,12 @@ run](../experiments/01_software-register-writes.md#011-first-register-write-hits
 
 Bad reads return `0xBADFxxxx`. Bits `[31:8]` are the PRI-ringstation error code
 and the low byte is not decoded. Three classes are distinguishable: decode
-errors, client/privilege errors, and refused/blocked reads.
+errors, client/privilege errors, and refused/blocked reads. `0xBADF1002` is a
+timeout, separate from decode.
 
 | Value | Class / PRI code | Observed when |
 |---|---|---|
+| `0xBADF1002` | timeout, `FECS_PRI_TIMEOUT` | GR register access at `0x504180`–`0x5041fc` |
 | `0xBADF5040` | client error, `FECS_PRI_CLIENT_ERR` | offset not implemented |
 | `0xBADF5610` | no such port | GSP IMEM/DMEM port absent |
 | `0xBADF5620` | port present, inaccessible | FSP core IMEM/DMEM; HS-window ICD/PC |
@@ -358,6 +360,8 @@ the ICD itself is in [GSP RISC-V and PRISCV](06_gsp-riscv-and-priscv.md).
 | `0xbadfbadf` | ICD command rejected | halt the core first; reads require `STOP` |
 | `0xbadf5720` / `0xbadf5723` | register present but blocked to host / GSP | the caller is not admitted |
 | `0xbadf5040` | offset not implemented | wrong address or block |
+| `0xbadf1002` | GR register access timed out | the register is present but not readable through this path |
+| `0x137200` | privilege-protected FECS/GR register | PL2 access refused; not FEAT |
 | `0x62` | GSP is fatal | one reboot; check the preceding Xid |
 
 ## Limits and open questions
@@ -374,10 +378,13 @@ the ICD itself is in [GSP RISC-V and PRISCV](06_gsp-riscv-and-priscv.md).
 - The PRISCV ICD is a diagnostic port, not a memory reader for the WPR, the boot
   image, or the data segment. See [GSP RISC-V and
   PRISCV](06_gsp-riscv-and-priscv.md).
-- Open question: which stage raises the boot-time PL2 PRI refusals
-  (`0xBADF5128` at `0x137200`)? [The sentinel
-  analysis](../experiments/08_assessment-and-cross-checks.md#089-sentinel-and-raw-function-analysis)
-  does not identify it.
+- Open question: which stage raises the boot-time PL2 PRI refusal (`0xBADF5128`
+  at `0x137200`)? The register is identified as a privilege-protected FECS/GR
+  word (`0xc120048a` in a `0x30`-stride table), not FEAT ([the debugger
+  test](../experiments/01_software-register-writes.md#018-the-debugger-class-reads-the-bank-but-cannot-write-it),
+  [the sentinel
+  analysis](../experiments/08_assessment-and-cross-checks.md#089-sentinel-and-raw-function-analysis));
+  the caller stage is still open.
 
 ## Evidence map
 

@@ -65,7 +65,15 @@ the missing FSP and BootROM images are in [the FSP/BootROM
 inventory](../experiments/07_plaintext-corpus.md#072-no-fsp-or-bootrom-image-ships).
 
 Blackwell has no SEC2 booter image for GB20x; the FMC is the only mutable PL3
-image.
+image. The Linux kernel's nova-core documentation states the same split: on
+Hopper/Blackwell the FSP is the root of trust, and "there is no SEC2 involvement,
+no Booter ucode, and no FWSEC-FRTS stage"
+([FSP and Secure Boot](https://docs.kernel.org/gpu/nova/core/fsp.html)). NVIDIA's
+public description of the Peregrine separation kernel and Boot ROM says both are
+formally verified in Ada SPARK
+([AdaCore](https://www.adacore.com/blog/proving-safety-at-scale-spark-risc-v-and-nvidias-security-strategy)).
+That is why the absent GB20x SEC2 booter is a boot-chain change, not a missing
+probe.
 
 ## What the host sends
 
@@ -84,6 +92,13 @@ Three host-built structures reach secure firmware: the COT, `WprMeta`, and
 | Public key | P-384 uncompressed point, 97 bytes |
 | Signature | Concatenated `r` and `s`, 96 bytes |
 | Stock FMC | `GspRmFmcGfwProdSigned_GB202` container `c04`, 287,304 bytes |
+
+The public `NvdmPayloadCot` struct in the Linux nova-core driver is `0x35C`
+bytes and carries 384-byte `public_key` and `signature` fields, with the
+populated P-384 point and `r||s` at the front
+([FSP source](https://github.com/torvalds/linux/blob/111e7b23/drivers/gpu/nova-core/firmware/fsp.rs)).
+The measured size matches to the byte. The kernel documentation calls the key
+RSA-3K; the local OpenSSL verification is P-384, so the measured signature wins.
 
 The stock baseline, the `c04` match, and the per-boot addresses are in [the
 boot-input baseline](../experiments/05_fmc-fsp-boot-inputs.md#053-boot-input-baseline-and-the-ordinary-fmc-path).
@@ -351,7 +366,10 @@ pass](../experiments/08_assessment-and-cross-checks.md#087-static-pass-over-feat
 
 - **No GB20x SEC2 booter ships.** The only SEC2 archives are a 303-byte Turing
   booter and a 6,233-byte Ada secure-scrub image. The image that carried the
-  Ada-era stack overflow does not exist for this chip. See [the shipped
+  Ada-era stack overflow does not exist for this chip. The nova-core
+  documentation states there is no SEC2 involvement, no Booter ucode, and no
+  FWSEC-FRTS stage on Hopper/Blackwell ([FSP and Secure
+  Boot](https://docs.kernel.org/gpu/nova/core/fsp.html)). See [the shipped
   components](../experiments/07_plaintext-corpus.md#071-pl3-components-in-the-driver-package)
   and [the FSP/BootROM
   inventory](../experiments/07_plaintext-corpus.md#072-no-fsp-or-bootrom-image-ships).

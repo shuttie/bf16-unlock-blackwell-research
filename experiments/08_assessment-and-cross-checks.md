@@ -40,6 +40,10 @@
 - The Linux driver's tracing facility is a compile-time no-op; there is no
   per-launch firmware trace to capture
   ([the tracing audit](#084-audit-of-the-tracing-facilities)).
+- The public record reproduces the FEAT drop on GB202 and GB203M before the
+  driver binds and places the missing primitive at PL3 code execution in the
+  security firmware; the local PLM decode matches NVIDIA's public Falcon v4
+  layout ([the external cross-check](#0811-the-register-route-is-a-pl3-problem)).
 
 **What it did not find.**
 
@@ -52,6 +56,9 @@
   ([the decoder](#086-gsp-log-decoding-without-the-metadata-elf)).
 - No evidence that the sentinel records touch the rate selector
   ([the sentinel analysis](#089-sentinel-and-raw-function-analysis)).
+- No public GB20x booter plaintext or debug-encryption key, and no evidence that
+  a PL3 write would change the Blackwell rate
+  ([the external cross-check](#0811-the-register-route-is-a-pl3-problem)).
 
 ## Experiments
 
@@ -67,6 +74,7 @@
 | 08.8 | [Live GSP log capture and decode](#088-live-gsp-log-capture-and-decode) | 173 records per card |
 | 08.9 | [Sentinel and raw-function log analysis](#089-sentinel-and-raw-function-analysis) | 0xBADF records are PRI refusals |
 | 08.10 | [An RTX PRO 6000 reference dump](#0810-an-rtx-pro-6000-reference-dump) | All-zero selectors, full rate |
+| 08.11 | [The register route is a PL3 problem](#0811-the-register-route-is-a-pl3-problem) | Prior art needs HS code execution |
 
 ## 08.1 Critical reassessment of the findings
 
@@ -377,6 +385,24 @@ Fuse values and the full-rate reference:
 | `FUSE_SS_IMLA2` | **0** | 0 | **3** |
 | `FUSE_SS_IMLA1` | **0** | 0 | **3** |
 | all other `FUSE_SS_*` | **0** | 0 | 0 |
+
+The override-enable fuses separate the consumer and datacenter parts:
+
+| Fuse | A100 / 170HX | Consumer Ampere |
+|---|---:|---:|
+| `FUSE_EN_SW_OVERRIDE` (`0x00820040`) | 0 | 1 |
+| `FUSE_DIS_SW_OVR` (`0x00820084`) | 1 | 1 |
+| `FUSE_FEAT_OVR_DIS` (`0x008203f0`) | 0 | 0 |
+
+The survey reads the override path as architecturally available but requiring
+Falcon HS, and calls the host-level register-write route dead for compute unlock
+([the external cross-check](#0811-the-register-route-is-a-pl3-problem)).
+
+The CMP 170HX is the prior-art part and the extreme case: all nine speed-select
+fuses read `0x5`, `FEAT_READOUT_1` reads `0x016db6ed`, its `SS0`/`SS1` read
+`0x51261070`/`0x00000002` and `0x10206152`/`0x00000006`, and its PLM is
+`0xffffff8f`, the same PL3-only gate. That is the part the SEC2 booter exploit
+was built for.
 
 **Result.**
 
@@ -879,3 +905,124 @@ is 1.97× its FP16 → FP32 number.
 - **Open question:** a same-card cold boot would show whether `SS0`/`SS1` move
   the way the 5090's do; the two cards already show cross-card differences. The
   override payload format still needs a PL3 write or an authoritative header.
+
+## 08.11 The register route is a PL3 problem
+
+**Question.** Does the public record explain why no host, GSP, or debugger write
+reached the selector, and what primitive is missing?
+
+**Why.**
+
+- The local negatives agree: the [GSP write
+  drops](../experiments/01_software-register-writes.md#012-speed-register-write-from-gsp-is-dropped),
+  the [debugger write
+  drops](../experiments/01_software-register-writes.md#018-the-debugger-class-reads-the-bank-but-cannot-write-it),
+  and the [PLM is
+  PL3-only](../experiments/01_software-register-writes.md#015-the-permission-mask-admits-pl3-writes-only).
+  Each could still be a harness artifact.
+- Independent groups probed GB202 and GB203M, and the prior-art projects
+  document the primitive the older unlocks used.
+- What it would give: the structural reason, or a route the local tools missed.
+
+**Method.**
+
+- Cross-check the local records against public material, no hardware:
+  - the CMP 170HX paper and the gpu-unlock-ada issue #12 thread;
+  - NVIDIA's public Falcon v4 register header and the `GPU_EXEC_REG_OPS`
+    header and implementation;
+  - the Linux kernel's nova-core FSP documentation;
+  - the Ampere fuse survey and the ai.rs 5090 write-up.
+- Compare the prior-art chain with the local boot-chain and register results.
+
+**Observed data.** The prior art ends in a host write, but the write is not the
+primitive. The 3090/4090 route runs code in the signed SEC2 booter: a
+host-controlled signature length overflows the booter's stack, the payload opens
+the PLMs, and only then does the host write `SS0`/`SS1` before an FLR. The CMP
+170HX paper calls the root enabler "arbitrary code execution in the GPU's Heavy
+Secure (HS) Falcon mode" and the compute cap "firmware-gated," not
+silicon-removed
+([A Canary in the Crypto Mine](https://doi.org/10.5281/zenodo.20916111)).
+
+Public probes and the prior-art projects show the same wall:
+
+- A pre-bind, cold-boot write ladder on GB202 and GB203M wrote
+  `SS0=0x88888888`, `SS1=0x8`, then `FEAT_OVR_PLM=0xffffffff`; every readback
+  was unchanged
+  ([issue #12](https://github.com/JustAResearcher/gpu-unlock-ada/issues/12)).
+  That removes the driver and the running GSP from the explanation.
+- No GB20x SEC2 booter is published in the Linux 610.43.03, Windows 610.88, or
+  Windows 621.01 modules, or in the 610/615 open source branches; the Blackwell
+  dispatch resolves to a stub that returns NULL
+  ([issue #12](https://github.com/JustAResearcher/gpu-unlock-ada/issues/12)).
+- The Linux kernel's nova-core documentation states the boot chain directly: on
+  Hopper/Blackwell the FSP is the root of trust, and "there is no SEC2
+  involvement, no Booter ucode, and no FWSEC-FRTS stage"
+  ([FSP and Secure Boot](https://docs.kernel.org/gpu/nova/core/fsp.html)). The
+  flow is FSP → FMC → GSP-RM.
+- NVIDIA's public Falcon v4 header defines the PLM layout the local decode uses,
+  including `WRITE_PROTECTION_ONLY_LEVEL3_ENABLED 0x00000008`
+  ([dev_falcon_v4.h](https://github.com/NVIDIA/open-gpu-kernel-modules/blob/main/src/common/inc/swref/published/nvswitch/ls10/dev_falcon_v4.h)).
+  The public [`GPU_EXEC_REG_OPS`
+  header](https://github.com/NVIDIA/open-gpu-kernel-modules/blob/main/src/common/sdk/nvidia/inc/ctrl/ctrl2080/ctrl2080gpu.h)
+  defines a per-op `NOACCESS` status, and the
+  [implementation](https://github.com/NVIDIA/open-gpu-kernel-modules/blob/main/src/nvidia/src/kernel/gpu/subdevice/subdevice_ctrl_gpu_regops.c)
+  validates the offset before execution. A `SUCCESS` with an unchanged readback
+  places the drop below the ioctl.
+- The Ampere fuse survey reports `SM_ISSUE_RATE_MODIFIER=0x5` on both A100 and
+  170HX with "no perf change when zeroed," and calls the host-level register
+  write approach "confirmed dead for compute unlock"
+  ([cross-part table](https://gist.github.com/nvlight/813a866dc69d417497a427f4208321ff)).
+- The ai.rs 5090 write-up reports the same drops from host and from UEFI and
+  bootloader-stage attempts, and that an edited fuse stops the card from posting
+  ([write-up](https://ai.rs/ai-developer/rtx-5090-tensor-core-unlock-blackwell)).
+
+The override-enable fuses are the remaining local gap. On Ampere, the cross-part
+survey reads `FUSE_EN_SW_OVERRIDE` (`0x00820040`) as `1` on consumer parts and
+`0` on A100/170HX, `FUSE_DIS_SW_OVR` (`0x00820084`) as `1` on all, and
+`FUSE_FEAT_OVR_DIS` (`0x008203f0`) as `0` on all. It concludes that the override
+path is architecturally available but "needs Falcon HS." The 5090 and PRO 6000
+runs did not read those words.
+
+The target is also not settled. The PRO 6000's full rate is all-zero fuses with
+every `SS0`/`SS1` enable bit clear
+([the reference dump](#0810-an-rtx-pro-6000-reference-dump)), so the full-rate
+state is the absence of a fuse penalty, not an active override. `fmla32=3` comes
+with a ~2× penalty, not the public enum's 1/8, and the community's naive
+`FEAT_READOUT_1` decode produces out-of-range values. `SS0=0x88888888` and
+`SS1=0x8` are inherited from Ada, not validated on GB202.
+
+**Result.**
+
+- **Answer:** the negative result is structural. The older unlocks are PL3
+  code-execution exploits, and Blackwell replaced the component that carried the
+  exploit with the FSP/FMC chain. The missing primitive is code execution in a
+  signed PL3 image, not a better register write.
+- **What we learned:**
+  - The FEAT write drop is reproduced on two Blackwell parts before any driver
+    binds, so it is hardware or GPU-firmware behavior, not the host stack.
+  - The PLM decode has a public field definition: the Falcon v4 header defines
+    the same write field and the level-3-only constant.
+  - The prior art needs a plaintext or a bug in the signed boot firmware. GB20x
+    publishes no SEC2 booter, and the FMC is signed, encrypted, and
+    authenticated; the local 16! key search is negative
+    ([the key search](../experiments/07_plaintext-corpus.md#0710-the-fmc-key-search-comes-back-negative)).
+  - Two local gaps remain: the override-enable fuses are unread on GB202, and
+    the Blackwell selector payload and readout law are unproven.
+- **Related:**
+  - The [GSP write
+    drop](../experiments/01_software-register-writes.md#012-speed-register-write-from-gsp-is-dropped),
+    the [debugger
+    drop](../experiments/01_software-register-writes.md#018-the-debugger-class-reads-the-bank-but-cannot-write-it),
+    and the [mask
+    decode](../experiments/01_software-register-writes.md#015-the-permission-mask-admits-pl3-writes-only)
+    are the local measurements.
+  - [The FEAT bank is final before the
+    FMC](../experiments/05_fmc-fsp-boot-inputs.md#0517-feat-bank-final-before-the-fmc)
+    and [the re-lock is autonomous
+    devinit](../experiments/05_fmc-fsp-boot-inputs.md#0521-plm-re-lock-is-autonomous-devinit)
+    bound the writer.
+  - The [FMC key
+    search](../experiments/07_plaintext-corpus.md#0710-the-fmc-key-search-comes-back-negative)
+    closes the debug-key route.
+- **Open question:** whether a PL3 write would change the Blackwell rate at all,
+  and whether the override path is enabled at the fuse level on this part.

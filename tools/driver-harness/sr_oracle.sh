@@ -9,9 +9,10 @@ mkdir -p "$TOOL_DIR/runs"
 #   sudo ./sr_oracle.sh <field> [value]
 #
 #   field 0  stock; clears any override
-#         1  magic                            (default 0xdeadbeefdeadbeef)
-#         2  revision                         (default 3)
-#         3  sizeOfSuspendResumeData          (default 0x66f0000 = half stock)
+#         1  magic                    (stock 0x8a3bb9e6c6c39d93; default wrong
+#                                     value 0xdeadbeefdeadbeef)
+#         2  revision                 (stock 2; default 3)
+#         3  sizeOfSuspendResumeData  (default 0x66f0000 = half stock)
 #         4  sysmemAddrOfSuspendResumeData    (value required; radix3 pointer)
 #         5  flags                            (default 1)
 #         6  radix3 address + delta           (value required)
@@ -32,6 +33,7 @@ set -u
 
 ROOT="${ROOT:-$(cd "$TOOL_DIR/../../.." && pwd)}"
 TREE="${TREE:?set TREE to the NVIDIA open kernel modules checkout at 595.91.07}"
+export MODDIR="${MODDIR:-$TREE/kernel-open}"
 DIR="$TOOL_DIR"
 SR_SRC="$TREE/src/nvidia/src/kernel/gpu/gsp/arch/turing/kernel_gsp_tu102.c"
 HOP_SRC="$TREE/src/nvidia/src/kernel/gpu/gsp/arch/hopper/kernel_gsp_gh100.c"
@@ -69,6 +71,8 @@ fi
 [ "$(id -u)" -eq 0 ] || { echo "must run as root" >&2; exit 1; }
 [ -f "$SR_SRC" ] && [ -f "$HOP_SRC" ] && [ -f "$FSP_SRC" ] \
     || { echo "missing tree sources" >&2; exit 1; }
+[ -f "$MODDIR/nvidia.ko" ] \
+    || { echo "missing $MODDIR/nvidia.ko (build the tree first)" >&2; exit 1; }
 
 mkdir -p "$OUT"
 say() { echo "$@" | tee -a "$OUT/run.log"; }
@@ -86,6 +90,15 @@ sed -i -E "s/^#define BF16_COT_VARY .*/#define BF16_COT_VARY 0/" "$FSP_SRC" || e
 sed -i -E "s/^#define BF16_COT_VALUE .*/#define BF16_COT_VALUE 0ULL/" "$FSP_SRC" || exit 1
 sed -i -E "s/^#define BF16_WPR_VARY .*/#define BF16_WPR_VARY 0/" "$HOP_SRC" || exit 1
 sed -i -E "s/^#define BF16_WPR_VALUE .*/#define BF16_WPR_VALUE 0ULL/" "$HOP_SRC" || exit 1
+# A stale cold-boot flip would fail the load before the suspend test starts.
+sed -i -E "s/^#define BF16_SIG_TAMPER .*/#define BF16_SIG_TAMPER 0/" "$HOP_SRC" || exit 1
+sed -i -E "s/^#define BF16_SIG_OFF .*/#define BF16_SIG_OFF 0x0/" "$HOP_SRC" || exit 1
+sed -i -E "s/^#define BF16_SIG_XOR .*/#define BF16_SIG_XOR 0x01/" "$HOP_SRC" || exit 1
+sed -i -E "s/^#define BF16_SIG_VALUE .*/#define BF16_SIG_VALUE 0/" "$HOP_SRC" || exit 1
+sed -i -E "s/^#define BF16_SIG_WIDTH .*/#define BF16_SIG_WIDTH 1/" "$HOP_SRC" || exit 1
+sed -i -E "s/^#define BF16_BOOT_TAMPER .*/#define BF16_BOOT_TAMPER 0/" "$HOP_SRC" || exit 1
+sed -i -E "s/^#define BF16_BOOT_OFF .*/#define BF16_BOOT_OFF 0x0/" "$HOP_SRC" || exit 1
+sed -i -E "s/^#define BF16_BOOT_XOR .*/#define BF16_BOOT_XOR 0x01/" "$HOP_SRC" || exit 1
 sed -i -E "s/^#define BF16_SR_VARY .*/#define BF16_SR_VARY $VARY/" "$SR_SRC" || exit 1
 sed -i -E "s/^#define BF16_SR_VALUE .*/#define BF16_SR_VALUE ${VALUE}ULL/" "$SR_SRC" || exit 1
 
@@ -99,8 +112,16 @@ say "== build ok"
 
 "$DIR/load_patched.sh" 2>&1 | tee -a "$OUT/load.log"
 load_rc=${PIPESTATUS[0]}
+if [ "$load_rc" -ne 0 ]; then
+    say "ERROR: instrumented load failed (rc=$load_rc); restoring stock"
+    "$DIR/load_patched.sh" --restore 2>&1 | tee -a "$OUT/restore.log" || true
+    exit 1
+fi
 say "== loaded"
 date -Is > "$OUT/phase_loaded"
+# Keep the load-time log: the ring buffer is cleared before the cycle, and a
+# hung resume never gets to write dmesg.txt.
+dmesg -T > "$OUT/dmesg_load.txt" 2>/dev/null || true
 
 PM_TEST_SAVED="$(cat /sys/power/pm_test)"
 dmesg -C 2>/dev/null || true
@@ -117,7 +138,7 @@ say "== suspend test rc=$susp_rc"
 
 dmesg -T > "$OUT/dmesg.txt" 2>/dev/null || true
 say "== oracle lines:"
-grep -E "BF16: SR VARY|BF16: SRMeta|BF16: FMC boot params|Fatal|RmInitAdapter|WPR2|Xid|resume" \
+grep -E "BF16: SR VARY|BF16: SRMeta|BF16: SRDUMP|BF16: FMC boot params|Fatal|RmInitAdapter|WPR2|Xid|resume" \
     "$OUT/dmesg.txt" | tail -40 | tee -a "$OUT/run.log"
 say "== nvidia-smi:"
 timeout -s KILL 20 nvidia-smi -L 2>&1 | tee -a "$OUT/run.log"

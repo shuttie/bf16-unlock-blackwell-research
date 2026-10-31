@@ -83,10 +83,16 @@ reads `FEAT_READOUT_1 = 0` and every arithmetic speed fuse at 0.
 | PL3 | Heavy Secure (HS) | FSP; GSP BootROM; FMC; SEC2 HS ucode; FWSEC-FRTS |
 
 The FEAT bank is readable from every level. Its write permission is a 32-bit
-privilege-level mask (PLM). The low byte follows the [Falcon v4
-layout](../experiments/01_software-register-writes.md#015-the-permission-mask-admits-pl3-writes-only)
-used by the other IP blocks; the fields above it are applied by analogy from
-Ada/Ampere.
+privilege-level mask (PLM). The field layout matches NVIDIA's public Falcon v4
+register header, which defines `READ_PROTECTION 3:0`, `WRITE_PROTECTION 7:4`
+with `WRITE_PROTECTION_ONLY_LEVEL3_ENABLED 0x00000008`, the two violation bits,
+the two source controls, and `SOURCE_ENABLE 31:12`
+([dev_falcon_v4.h](https://github.com/NVIDIA/open-gpu-kernel-modules/blob/main/src/common/inc/swref/published/nvswitch/ls10/dev_falcon_v4.h)).
+The [mask
+decode](../experiments/01_software-register-writes.md#015-the-permission-mask-admits-pl3-writes-only)
+applies that layout to the measured value. The FEAT block is not a Falcon
+register file, so the match removes the field-name guess without proving the
+bank is a Falcon PLM.
 
 | Field | Bits | `0xfffffb8f` (stock) | `0x80842bcf` (after FLR) |
 |---|---|---:|---:|
@@ -104,6 +110,17 @@ silently](../experiments/01_software-register-writes.md#012-speed-register-write
 The drop still returns `SUCCESS`; only a readback distinguishes it. The [mask
 decode](../experiments/01_software-register-writes.md#015-the-permission-mask-admits-pl3-writes-only)
 gives the PL3-only write field.
+
+The gate sits below every host-facing path. The public
+[`GPU_EXEC_REG_OPS`
+header](https://github.com/NVIDIA/open-gpu-kernel-modules/blob/main/src/common/sdk/nvidia/inc/ctrl/ctrl2080/ctrl2080gpu.h)
+defines a per-op `NOACCESS` status, and the register-op implementation validates
+the offset before execution, so a write with a valid offset returns `SUCCESS`
+and is still dropped ([the GSP
+write](../experiments/01_software-register-writes.md#012-speed-register-write-from-gsp-is-dropped),
+[the debugger
+write](../experiments/01_software-register-writes.md#018-the-debugger-class-reads-the-bank-but-cannot-write-it)).
+The drop is the hardware privilege check, not an argument error.
 
 The PLM is not static across resets:
 
@@ -295,11 +312,21 @@ of `FEAT_READOUT_1` decodes to 0, including DP `[30:28]`
 
 ## What is proven, what is inferred
 
+The public record reproduces the FEAT drop on GB202 and GB203M before the
+driver binds and places the missing primitive at PL3 code execution in the
+security firmware ([the external
+cross-check](../experiments/08_assessment-and-cross-checks.md#0811-the-register-route-is-a-pl3-problem)).
+The local PLM decode matches the public Falcon v4 header's `WRITE_PROTECTION`
+and `SOURCE_ENABLE` fields ([the mask
+decode](../experiments/01_software-register-writes.md#015-the-permission-mask-admits-pl3-writes-only)).
+
 **Proven on hardware.**
 
 - The [FEAT bank drops PL2
   writes](../experiments/01_software-register-writes.md#012-speed-register-write-from-gsp-is-dropped)
   and returns success.
+- The [debugger class reads the bank and its FEAT write
+  drops](../experiments/01_software-register-writes.md#018-the-debugger-class-reads-the-bank-but-cannot-write-it).
 - The [FUSE shadow is not
   writable](../experiments/01_software-register-writes.md#014-the-fuse-shadow-and-the-inert-modifier)
   from PL0 or PL2.
@@ -329,6 +356,14 @@ of `FEAT_READOUT_1` decodes to 0, including DP `[30:28]`
   reached the typed register space but needed a caller-owned RM channel.
 - The Ada persistence model. On GB202 an FLR resets the PLM and the devinit
   re-locks it; the override does not stay open across reset.
+- The override-enable fuses. `0x00820040`, `0x00820084`, and `0x008203f0` were
+  not read on GB202; on Ampere consumer parts they read `1`/`1`/`0`, and the
+  override path is described as requiring Falcon HS ([the external
+  cross-check](../experiments/08_assessment-and-cross-checks.md#0811-the-register-route-is-a-pl3-problem)).
+- Whether a PL3 write would change the Blackwell rate. The PRO 6000 full-rate
+  state is all-zero fuses with every override-enable bit clear, so the override
+  payload is still unvalidated ([the reference
+  dump](../experiments/08_assessment-and-cross-checks.md#0810-an-rtx-pro-6000-reference-dump)).
 
 ## What would count as an unlock
 
@@ -359,6 +394,8 @@ Issue-rate numbers alone are not enough; Ada GEMM gains were shape-dependent.
 | Full-rate reference | [PRO 6000 dump](../experiments/08_assessment-and-cross-checks.md#0810-an-rtx-pro-6000-reference-dump) | [direct probe](../tools/direct-probe/), [issue-rate probe](../tools/issue-rate-probe/) |
 | Getter/static-info consumers | [08.7 static pass](../experiments/08_assessment-and-cross-checks.md#087-static-pass-over-feat-and-fsp) | [GSP-RM tools](../tools/gsp-rm-tools/) |
 | FLR window and re-lock | [01.6 window](../experiments/01_software-register-writes.md#016-the-post-reset-window-closes-before-gsp-rm), [05.21 re-lock](../experiments/05_fmc-fsp-boot-inputs.md#0521-plm-re-lock-is-autonomous-devinit) | [driver harness](../tools/driver-harness/) |
+| Debugger-class write drop | [01.8 debugger test](../experiments/01_software-register-writes.md#018-the-debugger-class-reads-the-bank-but-cannot-write-it) | [register access](../tools/register-access/) |
+| Prior-art primitive and external drop | [08.11 external cross-check](../experiments/08_assessment-and-cross-checks.md#0811-the-register-route-is-a-pl3-problem) | offline |
 
 Register values and the full FEAT/FUSE maps are in
 [03_register-map.md](03_register-map.md). The boot chain that runs before the

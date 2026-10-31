@@ -1,6 +1,6 @@
 # RTX 5090 BF16 Unlock experiments
 
-This repo is a log of 84 unsuccessful experiments I did to unlock BF16 full rate on
+This repo is a log of 87 unsuccessful experiments I did to unlock BF16 full rate on
 the 5090, the way it was done on [4090](https://github.com/JustAResearcher/gpu-unlock-ada)
 and [3090](https://github.com/Zagitta/gpu-unlock) cards.
 
@@ -174,7 +174,7 @@ the experiment record with the commands and artifacts.
 
 | What I did | Result | Status | Records |
 |---|---|---|---|
-| Wrote the speed registers from the host window and from GSP firmware; tried the [fuse shadow](specs/03_register-map.md#fuse-and-otp) and the graphics engine's [rate register](specs/02_privilege-and-rate-control.md#the-rm-getter-and-the-host-view) | Success returned, writes dropped; the rate register is writable but reasserted and inert | Dead, measured | [register writes](experiments/01_software-register-writes.md) |
+| Wrote the speed registers from the host window, from GSP firmware, and through the CUDA debugger class; tried the [fuse shadow](specs/03_register-map.md#fuse-and-otp) and the graphics engine's [rate register](specs/02_privilege-and-rate-control.md#the-rm-getter-and-the-host-view) | Success returned, writes dropped; the rate register is writable but reasserted and inert; the debugger class reads the bank but cannot write it | Dead, measured | [register writes](experiments/01_software-register-writes.md) |
 | Used the driver's registry knobs (`RMOverrideSmSpeedSelect*`, `RMDisableFeatureDisablement`) | Parsed and stored, no rate or bank change | Dead, measured | [registry keys](experiments/02_registry-and-static-audit.md) |
 | Poked the GPU command ring ([FECS doorbell](specs/03_register-map.md#fecs) and [graphics engine context buffers](specs/03_register-map.md#sm-and-gr)) | Payloads are addresses and sizes, no selector field | Dead, measured/static | [FECS and context](experiments/03_fecs-and-gr-context.md) |
 | Read firmware memory (GSP, FSP, and SEC2 local memory; [RISC-V debug engine](specs/06_gsp-riscv-and-priscv.md#priscv-register-map)) | Local memory empty or locked to PL3; the debug engine reads the 14.4 MB GSP-RM code segment after a halt, not secure memory or the WPR | Dead or diagnostic | [secure memory](experiments/04_hs-sec2-fsp-memory.md) |
@@ -196,8 +196,11 @@ The open leads, ranked by the decision each one buys, are in [Open
 leads](IDEAS.md). The short version: the FEAT readout and fuse target is
 validated ([the reference
 dump](experiments/08_assessment-and-cross-checks.md#0810-an-rtx-pro-6000-reference-dump));
-the `SS0`/`SS1` override format is still open. The cold-boot FMC parser map is
-measured ([the parser
+the `SS0`/`SS1` override format is still open. The public record reproduces the
+drop on GB202 and GB203M and names the missing primitive: PL3 code execution in
+the security firmware, not a better register write ([the external
+cross-check](experiments/08_assessment-and-cross-checks.md#0811-the-register-route-is-a-pl3-problem)).
+The cold-boot FMC parser map is measured ([the parser
 group](experiments/09_fmc-cold-boot-parsers.md)): the boot inputs are bounded or
 exact, and the image bytes are authenticated. Next is the suspend/resume
 descriptor and page table, then the FSP framing. The vBIOS app `0x23` tail and
@@ -213,6 +216,9 @@ why its memory read is gated, but it cannot read the image.
 - A [GSP-RM bug](experiments/01_software-register-writes.md#012-speed-register-write-from-gsp-is-dropped)
   as a direct FEAT write path. PL2 is too late; a patched GSP-RM is still a
   foothold for other probes ([Open leads](IDEAS.md)).
+- CUDA debugger-class FEAT writes. The class reads the bank and its write is
+  dropped ([the debugger
+  test](experiments/01_software-register-writes.md#018-the-debugger-class-reads-the-bank-but-cannot-write-it)).
 - [vBIOS flashing](experiments/07_plaintext-corpus.md#073-the-vbios-has-no-feat-address).
   It is signed.
 - Fuse editing. The boot fuse check fails.

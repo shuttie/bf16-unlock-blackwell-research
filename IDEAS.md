@@ -17,6 +17,10 @@
   main firmware on the GPU's RISC-V coprocessor, PL2) writes drop, the bank's
   write mask admits PL3 (boot firmware) only, and the pre-lock writer runs
   before the host.
+- The public record reproduces the drop on GB202 and GB203M before the driver
+  binds and places the missing primitive at PL3 code execution in the security
+  firmware ([the external
+  cross-check](experiments/08_assessment-and-cross-checks.md#0811-the-register-route-is-a-pl3-problem)).
 - The full-rate readout is measured: two RTX PRO 6000s read
   `FEAT_READOUT_1 = 0` with every arithmetic speed fuse at 0.
 - The cold-boot parser map is measured. The [FMC parser
@@ -44,8 +48,8 @@ cost.
 | C11 | [Context patch buffer](#context-patch-buffer) | Can the host edit a GSP-consumed pointer list? | 1 day | PL2 write primitive |
 | C19 | [SR saved-state malleability](#sr-saved-state-malleability) | Is the saved ciphertext malleable? | 1 day | PL2 foothold |
 | C05 | [Below-PLM lock](#below-plm-lock) | Does a PL3 write even suffice? | 1 hour | Prerequisite for any PL3 plan |
+| C21 | [Override-enable fuses](#override-enable-fuses) | Is the FEAT override path enabled at the fuse level? | 1 hour | Bounds any PL3 plan |
 | C12 | [Host FECS doorbell](#host-fecs-doorbell) | Can the host command FECS? | 1 hour | PL0 consumer interface |
-| C16 | [The 0x137200 register](#the-0x137200-register) | What is the refused PL2 register? | 1 hour | Free lead |
 | C17 | [Ada payload from PL2](#ada-payload-from-pl2) | Does the exact payload take a different gate? | minutes | Completes the record |
 | C06 | [Name the writer](#name-the-writer) | Is the re-lock FSP or PMU? | 1 hour | Names the pre-lock actor |
 | C10 | [Per-SM channel](#per-sm-channel) | Is per-SM reachable with a real channel? | 1–2 days | Last non-PL3 register space |
@@ -216,6 +220,26 @@ foothold rather than the selector. A hang on every data-page flip points to
 authentication. Run this only after C01, because a descriptor bug is the
 stronger route.
 
+## Override-enable fuses
+
+**Where it comes from.** The FEAT write drops at PL0 and PL2, and the FMC is the
+only PL3 image ([the write
+test](experiments/01_software-register-writes.md#012-speed-register-write-from-gsp-is-dropped)).
+On Ampere the override path has its own fuse enables: `FUSE_EN_SW_OVERRIDE`
+(`0x820040`) reads `1` on consumer parts and `0` on A100/170HX,
+`FUSE_DIS_SW_OVR` (`0x820084`) reads `1` on all, and `FUSE_FEAT_OVR_DIS`
+(`0x8203f0`) reads `0` on all ([the external
+cross-check](experiments/08_assessment-and-cross-checks.md#0811-the-register-route-is-a-pl3-problem)).
+The 5090 and PRO 6000 runs did not read them.
+
+**Try.** Read `0x820040`, `0x820084`, `0x8203f0`, and `0x82038c` on the 5090
+and the PRO 6000, with the stock driver and at cold boot. They are read-only.
+
+**Decision.** Consumer values matching Ampere (`1`/`1`/`0`) mean the override
+path is enabled at the fuse level and the wall is the PLM. A disabled value
+means a PL3 exploit would also have to clear the fuse gate. Either result
+bounds the PL3 plan; neither is a route.
+
 ## Below-PLM lock
 
 **Where it comes from.** FUSE writes drop even where the page mask reads
@@ -230,10 +254,13 @@ spec](specs/02_privilege-and-rate-control.md#privilege-levels-and-the-plm)).
 The PRO 6000 has the same PL3-only gate at full rate, so the gate is not the
 cap; the fuses are ([the reference
 dump](experiments/08_assessment-and-cross-checks.md#0810-an-rtx-pro-6000-reference-dump)).
+The public record places the older unlock at HS code execution, which is the
+only level the mask admits ([the external
+cross-check](experiments/08_assessment-and-cross-checks.md#0811-the-register-route-is-a-pl3-problem)).
 
 **Try.** Read and write the fuse security words `0x82038c`, `0x8203f0`,
-`0x8200d0`–`0x8200fc`, and `0x820040`; read the FEAT words across the FLR
-(function-level reset) window.
+`0x8200d0`–`0x8200fc`, `0x820040`, and `0x820084`; read the FEAT words across
+the FLR (function-level reset) window.
 
 **Decision.** The reads show whether a separate secure-write qualification
 exists below the PLM, one that a future PL3 exploit would also have to satisfy.
@@ -260,20 +287,6 @@ probe](tools/issue-rate-probe/).
 **Decision.** Dropped host writes close the path. Accepted writes make the
 FECS command interface a PL0 surface, and the mask sweep answers whether a
 command can select the rate.
-
-## The 0x137200 register
-
-**Where it comes from.** The GSP log contains a refused PL2 access at
-`0x137200` during boot ([the sentinel
-analysis](experiments/08_assessment-and-cross-checks.md#089-sentinel-and-raw-function-analysis)).
-The register is not identified ([the sentinel
-spec](specs/08_errors-and-logging.md#data-sentinels-and-bad-reads)).
-
-**Try.** Probe `0x137200` and its neighbours from the host and the GSP; record
-the PLM and sentinels; search the headers and vBIOS for the address.
-
-**Decision.** A security or handshake register is a lead. An unrelated power
-register is not.
 
 ## Ada payload from PL2
 
@@ -414,6 +427,12 @@ command sets it. High effort, no hardware.
   sweep](experiments/02_registry-and-static-audit.md#024-speed-select-keys-are-inert-on-hardware)).
 - BAR1 and physical address `0x5dd00000`. Structurally closed ([the FB
   route](experiments/05_fmc-fsp-boot-inputs.md#0525-fb-route-shut)).
+- CUDA debugger-class FEAT writes. The class reads the bank and the write drops
+  ([the debugger
+  test](experiments/01_software-register-writes.md#018-the-debugger-class-reads-the-bank-but-cannot-write-it)).
+- The `0x137200` lead. It is a privilege-protected FECS/GR register
+  (`0xc120048a` in a `0x30`-stride table), not a FEAT word ([the debugger
+  test](experiments/01_software-register-writes.md#018-the-debugger-class-reads-the-bank-but-cannot-write-it)).
 
 ---
 
