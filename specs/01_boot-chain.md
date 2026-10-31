@@ -23,6 +23,21 @@
 - Suspend/resume reuses the cold-boot COT and the already-mapped GSP-RM image.
   Only the restored state can change what runs.
 
+**In this spec.**
+
+- [Boot order](#boot-order): the four stages and their privilege levels.
+- [What the host sends](#what-the-host-sends): the COT and `WprMeta` structures.
+  - [COT v2](#cot-v2)
+  - [WprMeta](#wprmeta)
+- [Suspend/resume](#suspendresume): `SRMeta`, the state size, and the radix3.
+- [FMC container](#fmc-container): header, signature envelope, and keys.
+- [FSP command surface](#fsp-command-surface): the live commands and framing.
+- [SEC2](#sec2): why the Ada-era route is gone.
+- [Failure modes](#failure-modes): the four classes.
+- [Firmware inventory](#firmware-inventory): what ships.
+- [Evidence map](#evidence-map): which record supports each fact.
+- [Terms](#terms): the boot-chain vocabulary.
+
 ## Boot order
 
 Privilege levels are PL3 (Heavy Secure) and PL2 (Light Secure).
