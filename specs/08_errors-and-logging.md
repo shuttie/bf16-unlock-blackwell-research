@@ -1,20 +1,47 @@
-# Errors and logging
+# Errors and logging: boot codes, sentinels, and the GSP log
 
-This spec is the reference for what secure firmware and the driver return when a
-boot input, register access, or log read fails, and for the format of the GSP-RM
-log rings. It covers the ten mapped boot codes, the NV status codes seen, the
-`0xBADF` sentinel families, the log record layout, and the host tracing
-facilities.
+## At a glance
 
-Most values here are `[measured]` on the two RTX 5090 cards; the log format is
-`[source]` from the firmware writers and the host reader, and confirmed by a live
-capture. The experiments behind each table are linked inline.
+- **Scope.** What secure firmware and the driver return when a boot input,
+  register access, or log read fails. It covers the ten mapped boot codes, the
+  NV status codes seen, the `0xBADF` sentinel families, the GSP-RM log ring
+  format, the decoder, and the host tracing facilities.
+- **Bench.** Stock RTX 5090 (GB202, `10de:2b85`), driver and GSP-RM 595.91.07,
+  two cards, unless the sentence says otherwise.
+- **Evidence.** Measured claims link to the experiment that established them.
+  The log format comes from the firmware writers and the host reader, confirmed
+  by a live capture. Claims from public headers or carried over from Ada/Ampere
+  say so in the sentence.
 
-Related specs: [boot chain](../specs/01_boot-chain.md) for where these codes are raised,
-[memory and host access](../specs/07_memory-and-host-access.md) for the WPR and FB paths,
-and [register map](../specs/03_register-map.md) for the register offsets named below.
+**The short version.**
 
-## 1. Boot error codes
+- Ten boot codes are mapped. Pre-auth checks (`0xd9`, `0xd6`, `0x827`, `0x82e`,
+  `0x885`) recover cleanly; authentication failures (`0x377`, `0x1db`, `0x33`)
+  leave WPR2 armed and need a reboot.
+- `0xaff` is the image-authentication failure for either boot image.
+- `0xBADFxxxx` reads are PRI-ringstation errors, not data. The low byte picks the
+  caller or engine for the blocked-port cases.
+- GSP-RM writes per-task log rings into host-mapped sysmem. The metadata ELF is
+  missing, but an ID table built from the plaintext image recovers a
+  function-level trace.
+- There is no per-launch firmware trace. The rate-relevant RM work happens once,
+  at engine/context initialization.
+
+**In this spec.**
+
+- [Boot error codes](#boot-error-codes)
+- [Failure taxonomy](#failure-taxonomy)
+- [NV status codes](#nv-status-codes)
+- [Data sentinels and bad reads](#data-sentinels-and-bad-reads)
+- [GSP log ring format](#gsp-log-ring-format)
+- [What the decoder recovers](#what-the-decoder-recovers)
+- [Host tracing facilities](#host-tracing-facilities)
+- [Reading a failure](#reading-a-failure)
+- [Limits and open questions](#limits-and-open-questions)
+- [Evidence map](#evidence-map)
+- [Terms](#terms)
+
+## Boot error codes
 
 Ten codes are mapped. The channel matters: `FSP response` codes come back in the
 COT reply (Task `0x1`, command `0x14`); `Fatal GSP-FMC Error` codes come from the
@@ -22,16 +49,16 @@ FMC/ACR path and are printed by the driver.
 
 | Code | Channel | Trigger | Recovery | Evidence |
 |---|---|---|---|---|
-| `0x83d` | FMC, partition 1 | vidmem FRTS withheld (`RmDisableCotCmd=0x4`) | clean | [E11](../experiments/02_registry-and-static-audit.md) |
-| `0xd9` | FSP response | COT `frtsVidmemSize != 0x100000` | clean | [E29](../experiments/05_fmc-fsp-boot-inputs.md), [E30](../experiments/05_fmc-fsp-boot-inputs.md) |
-| `0xd6` | FSP response | COT FRTS offset not 128K-aligned | clean | [E32](../experiments/05_fmc-fsp-boot-inputs.md) |
-| `0x827` | FMC/ACR, partition 1 | `WprMeta.magic` wrong | clean | [E36](../experiments/05_fmc-fsp-boot-inputs.md) |
-| `0x82e` | FMC, partition 1 | `WprMeta.sizeOfBootloader` changed from `0x47000` | clean | [E69](../experiments/05_fmc-fsp-boot-inputs.md) |
-| `0x885` | FMC, partition 1 | `WprMeta.bootloaderManifestOffset` outside the image | clean | [E69](../experiments/05_fmc-fsp-boot-inputs.md) |
-| `0x377` | FSP response | COT hash authentication failure | **WPR2 left up** | [E41](../experiments/05_fmc-fsp-boot-inputs.md) |
-| `0x1db` | FSP response | COT public key not accepted (self-signed pair) | **WPR2 left up** | [E61](../experiments/05_fmc-fsp-boot-inputs.md) |
-| `0x33` | FSP response | FMC container byte changed while the COT hash is stock | **WPR2 left up** | [E62](../experiments/05_fmc-fsp-boot-inputs.md) |
-| `0xaff` | FMC, partition 1, info `0xb` | modified GSP-RM image or bootloader image | clean if firmware restored | [E15](../experiments/05_fmc-fsp-boot-inputs.md), [E40](../experiments/05_fmc-fsp-boot-inputs.md), [E69](../experiments/05_fmc-fsp-boot-inputs.md) |
+| `0x83d` | FMC, partition 1 | vidmem FRTS withheld (`RmDisableCotCmd=0x4`) | clean | [FRTS withheld](../experiments/02_registry-and-static-audit.md#022-boot-input-keys-change-what-the-fmc-receives) |
+| `0xd9` | FSP response | COT `frtsVidmemSize != 0x100000` | clean | [FRTS size rejected](../experiments/05_fmc-fsp-boot-inputs.md#054-frts-size-rejected-by-the-fsp), [control boot](../experiments/05_fmc-fsp-boot-inputs.md#055-frts-size-control-boots-larger-refused) |
+| `0xd6` | FSP response | COT FRTS offset not 128K-aligned | clean | [misaligned base](../experiments/05_fmc-fsp-boot-inputs.md#057-misaligned-frts-base-draws-0xd6) |
+| `0x827` | FMC/ACR, partition 1 | `WprMeta.magic` wrong | clean | [magic enforced](../experiments/05_fmc-fsp-boot-inputs.md#0511-wprmeta-magic-enforced-verified-accepted) |
+| `0x82e` | FMC, partition 1 | `WprMeta.sizeOfBootloader` changed from `0x47000` | clean | [bootloader description](../experiments/05_fmc-fsp-boot-inputs.md#0523-wprmeta-bootloader-description-and-images) |
+| `0x885` | FMC, partition 1 | `WprMeta.bootloaderManifestOffset` outside the image | clean | [bootloader description](../experiments/05_fmc-fsp-boot-inputs.md#0523-wprmeta-bootloader-description-and-images) |
+| `0x377` | FSP response | COT hash authentication failure | **WPR2 left up** | [hash authenticated](../experiments/05_fmc-fsp-boot-inputs.md#0516-cot-hash-authenticated-auth-failure-wedges) |
+| `0x1db` | FSP response | COT public key not accepted (self-signed pair) | **WPR2 left up** | [key anchored](../experiments/05_fmc-fsp-boot-inputs.md#0518-cot-public-key-anchored) |
+| `0x33` | FSP response | FMC container byte changed while the COT hash is stock | **WPR2 left up** | [container tampered](../experiments/05_fmc-fsp-boot-inputs.md#0519-fmc-container-read-back-and-tampered) |
+| `0xaff` | FMC, partition 1, info `0xb` | modified GSP-RM image or bootloader image | clean if firmware restored | [patched image](../experiments/05_fmc-fsp-boot-inputs.md#052-patched-gsp-rm-image-rejected-by-the-fmc), [verified flag](../experiments/05_fmc-fsp-boot-inputs.md#0515-verified-does-not-bypass-image-verification), [bootloader description](../experiments/05_fmc-fsp-boot-inputs.md#0523-wprmeta-bootloader-description-and-images) |
 
 The distinction that matters operationally is pre-auth versus auth. The size,
 alignment, and magic checks reject without side effects. An authentication
@@ -52,41 +79,44 @@ Fatal GSP-FMC Error: version=0x1, partition=0x1, error code=0xaff, additional in
 `0xaff` is the image-authentication failure for either boot image. `0x82e` and
 `0x885` are separate pre-auth checks: the bootloader length and the manifest
 offset are consumed, while the code/data offsets and the signature size are not.
-See [boot chain](../specs/01_boot-chain.md) for the structures and
-[E69](../experiments/05_fmc-fsp-boot-inputs.md) for the field matrix.
+See [boot chain](01_boot-chain.md) for the structures and [the bootloader
+description](../experiments/05_fmc-fsp-boot-inputs.md#0523-wprmeta-bootloader-description-and-images)
+for the field matrix.
 
-## 2. Failure taxonomy
+## Failure taxonomy
 
 Four failure modes have different costs:
 
 | Mode | Example | Recovery | Evidence |
 |---|---|---|---|
-| Structured refusal, clean | `0xd9`, `0xd6`, `0x827`, `0x82e`, `0x885` | one module reload | [E29](../experiments/05_fmc-fsp-boot-inputs.md)–[E41](../experiments/05_fmc-fsp-boot-inputs.md) |
-| Structured refusal, WPR2 up | `0x377`, `0x1db`, `0x33` | one reboot | [E41](../experiments/05_fmc-fsp-boot-inputs.md), [E61](../experiments/05_fmc-fsp-boot-inputs.md), [E62](../experiments/05_fmc-fsp-boot-inputs.md) |
-| Hang, no host log | bad `SRMeta` magic | one reboot; no evidence without an out-of-band console | [SR-resume experiments](../experiments/06_sr-resume.md) |
-| Hard wedge | heap below GSP-RM's minimum | one reboot, possibly a cold power cycle | [E39](../experiments/05_fmc-fsp-boot-inputs.md) |
+| Structured refusal, clean | `0xd9`, `0xd6`, `0x827`, `0x82e`, `0x885` | one module reload | [FRTS size](../experiments/05_fmc-fsp-boot-inputs.md#054-frts-size-rejected-by-the-fsp), [magic](../experiments/05_fmc-fsp-boot-inputs.md#0511-wprmeta-magic-enforced-verified-accepted), [bootloader](../experiments/05_fmc-fsp-boot-inputs.md#0523-wprmeta-bootloader-description-and-images) |
+| Structured refusal, WPR2 up | `0x377`, `0x1db`, `0x33` | one reboot | [hash](../experiments/05_fmc-fsp-boot-inputs.md#0516-cot-hash-authenticated-auth-failure-wedges), [key](../experiments/05_fmc-fsp-boot-inputs.md#0518-cot-public-key-anchored), [container](../experiments/05_fmc-fsp-boot-inputs.md#0519-fmc-container-read-back-and-tampered) |
+| Hang, no host log | bad `SRMeta` magic | one reboot; no evidence without an out-of-band console | [bad SRMeta magic](../experiments/06_sr-resume.md#062-a-bad-srmeta-magic-hangs-the-resume) |
+| Hard wedge | heap below GSP-RM's minimum | one reboot, possibly a cold power cycle | [16 MiB heap](../experiments/05_fmc-fsp-boot-inputs.md#0514-16-mib-heap-request-wedges-the-boot) |
 
 The hang case is the expensive one for debugging. Journald freezes after
 `Filesystem sync`, and post-freeze printk is only flushed on a successful resume.
 A failed resume therefore leaves no host-visible log. Use a network console or
-phase markers before running suspend/resume variants.
+phase markers before running suspend/resume variants. See [the bad-magic
+test](../experiments/06_sr-resume.md#062-a-bad-srmeta-magic-hangs-the-resume).
 
-## 3. NV status codes
+## NV status codes
 
 These are the RM status values seen in the experiments:
 
 | Code | Name | Context | Evidence |
 |---|---|---|---|
-| `0x1f` | `NV_ERR_INVALID_ARGUMENT` | `GPU_EXEC_REG_OPS` with every `GR_CTX` regtype | [E71](../experiments/01_software-register-writes.md) |
-| `0x56` | `NV_ERR_NOT_SUPPORTED` | RISC-V debug stubs; `GPU_EXEC_REG_OPS` `FB` regtype | [E71](../experiments/01_software-register-writes.md) |
-| `0x62` | `NV_ERR_RESET_REQUIRED` | RPCs to a fatal GSP | [E07](../experiments/01_software-register-writes.md) |
-| `0x65` | `NV_ERR_TIMEOUT` | GSP status queue after an undersized heap | [E39](../experiments/05_fmc-fsp-boot-inputs.md) |
+| `0x1f` | `NV_ERR_INVALID_ARGUMENT` | `GPU_EXEC_REG_OPS` with every `GR_CTX` regtype | [GR_CTX rejected](../experiments/01_software-register-writes.md#017-per-context-registers-need-a-caller-owned-channel) |
+| `0x56` | `NV_ERR_NOT_SUPPORTED` | RISC-V debug stubs; `GPU_EXEC_REG_OPS` `FB` regtype | [FB unsupported](../experiments/01_software-register-writes.md#017-per-context-registers-need-a-caller-owned-channel) |
+| `0x62` | `NV_ERR_RESET_REQUIRED` | RPCs to a fatal GSP | [crashed GSP](../experiments/01_software-register-writes.md#011-first-register-write-hits-a-crashed-gsp) |
+| `0x65` | `NV_ERR_TIMEOUT` | GSP status queue after an undersized heap | [16 MiB heap](../experiments/05_fmc-fsp-boot-inputs.md#0514-16-mib-heap-request-wedges-the-boot) |
 
 `0x62` is not a statement about the requested operation: once the GSP is fatal,
 `_kgspRpcSanityCheck` returns it for every RPC. The per-op status can still read
-`SUCCESS`, which is why register claims need a readback.
+`SUCCESS`, which is why register claims need a readback. See [the crashed-GSP
+run](../experiments/01_software-register-writes.md#011-first-register-write-hits-a-crashed-gsp).
 
-## 4. Data sentinels and bad reads
+## Data sentinels and bad reads
 
 Bad reads return `0xBADFxxxx`. Bits `[31:8]` are the PRI-ringstation error code
 and the low byte is not decoded. Three classes are distinguishable: decode
@@ -109,11 +139,12 @@ errors, client/privilege errors, and refused/blocked reads.
 The low byte also encodes the caller or engine for the blocked/port cases, which
 is why `0xBADF5720` and `0xBADF5723` differ. `0xBADF51` is a family, not a fuse
 marker: the low byte varies (`0x0c` at the fuse block, `0x28` at `0x137200`).
-Evidence: [E18](../experiments/03_fecs-and-gr-context.md),
-[E21](../experiments/04_hs-sec2-fsp-memory.md),
-[E60](../experiments/08_assessment-and-cross-checks.md),
-[E63](../experiments/04_hs-sec2-fsp-memory.md),
-[E67](../experiments/04_hs-sec2-fsp-memory.md).
+The families come from [the live FECS/SEC2
+probes](../experiments/03_fecs-and-gr-context.md#031-live-fecs-fsp-and-sec2-probes),
+[the FSP EMEM port](../experiments/04_hs-sec2-fsp-memory.md#042-fsp-emem-pointer-writes-are-dropped),
+[the sentinel analysis](../experiments/08_assessment-and-cross-checks.md#089-sentinel-and-raw-function-analysis),
+[the PRISCV split](../experiments/04_hs-sec2-fsp-memory.md#043-priscv-block-is-split-per-master),
+and [the live ICD](../experiments/04_hs-sec2-fsp-memory.md#044-priscv-icd-is-a-live-debug-port).
 
 Other sentinels and data markers:
 
@@ -127,17 +158,19 @@ Other sentinels and data markers:
 | `0x00c36180` | stock `FEAT_READOUT_1`; a known constant used as a search key, not a sentinel |
 
 A read that returns `0xbad0ac00` is a protection response, not firmware data. The
-WPR is host-unreadable and the fill is identical on both cards
-([E74](../experiments/05_fmc-fsp-boot-inputs.md)). A read that returns
-`0xbadfbadf` from the ICD means the command was rejected; `RREG`, `RCSR`, and
-`RDM` require a halted hart ([E67](../experiments/04_hs-sec2-fsp-memory.md)).
+WPR is host-unreadable and the fill is identical on both cards. See [the closed
+FB route](../experiments/05_fmc-fsp-boot-inputs.md#0525-fb-route-shut). A read
+that returns `0xbadfbadf` from the ICD means the command was rejected; `RREG`,
+`RCSR`, and `RDM` require a halted hart. See [the live
+ICD](../experiments/04_hs-sec2-fsp-memory.md#044-priscv-icd-is-a-live-debug-port).
 
-## 5. GSP log ring format
+## GSP log ring format
 
 GSP-RM writes per-task log rings into host-allocated, host-mapped sysmem. The
-host can read them without firmware changes. The format below is `[source]` from
-the three firmware writers and the host reader, and `[measured]` by a live
-capture.
+host can read them without firmware changes. The format below comes from the
+three firmware writers and the host reader; a live capture confirmed it. See
+[the decoder](../experiments/08_assessment-and-cross-checks.md#086-gsp-log-decoding-without-the-metadata-elf)
+and [the live capture](../experiments/08_assessment-and-cross-checks.md#088-live-gsp-log-capture-and-decode).
 
 Ring header:
 
@@ -212,7 +245,7 @@ Sizes are registry-overridable with
 [driver harness](../tools/driver-harness/) and the decoder in
 [GSP-RM tools](../tools/gsp-rm-tools/).
 
-## 6. What the decoder recovers
+## What the decoder recovers
 
 The logging metadata ELF (`gsp_log_ga10x.bin`) is not shipped, so the message
 text and severity are unavailable. The metadata IDs are compile-time constants at
@@ -258,11 +291,13 @@ Sample ring header and decoded record:
 The decoder selftest passes 27 checks (round-trip, wrap, bad boundary, resync,
 auto-put, text join). A live capture produced the same `(task, ID, argc)`
 sequence on both cards, and 70/70 raw-attributed records matched a real writer
-call site. Evidence: [E57](../experiments/08_assessment-and-cross-checks.md),
-[E59](../experiments/08_assessment-and-cross-checks.md),
-[E60](../experiments/08_assessment-and-cross-checks.md).
+call site. See [the decoder
+audit](../experiments/08_assessment-and-cross-checks.md#086-gsp-log-decoding-without-the-metadata-elf),
+[the live capture](../experiments/08_assessment-and-cross-checks.md#088-live-gsp-log-capture-and-decode),
+and [the sentinel/raw-function
+analysis](../experiments/08_assessment-and-cross-checks.md#089-sentinel-and-raw-function-analysis).
 
-## 7. Host tracing facilities
+## Host tracing facilities
 
 There is no per-launch firmware operation to trace. A CUDA launch is a pushbuffer
 entry and a channel doorbell; the resource manager is not in that path. Its
@@ -277,16 +312,16 @@ rate-relevant work happens once, at engine/context initialization.
 | `RMNvLog`, `RMDumpNvLog` | host-RM NVLOG, dumped to dmesg on Xid/unload |
 | `RMEnableEventTracer` | no-op on Linux; every `RMTRACE_*` macro is compiled out in `tracer.h` |
 | `nvidia-debugdump` | external build lists devices and emits an opaque blob |
-| PRISCV ICD | direct MMIO debug port; commands execute, and `STOP` + `RDM` reads the halted core’s RM code segment |
+| PRISCV ICD | direct MMIO debug port; commands execute, and `STOP` + `RDM` reads the halted core's RM code segment |
 
 What can be added with modest instrumentation: a host control/RPC tracer (ctrl ID
 and GSP RPC function ID plus parameter size) and a raw GSP log-buffer dump at a
 chosen point. Neither reaches FSP, FMC, or Heavy Secure code. The pre/post FEAT
-sampler is the worked example of instrumenting a boot stage. Evidence:
-[E55](../experiments/08_assessment-and-cross-checks.md); the ICD itself is in
-[GSP RISC-V and PRISCV](../specs/06_gsp-riscv-and-priscv.md).
+sampler is the worked example of instrumenting a boot stage. See [the tracing
+audit](../experiments/08_assessment-and-cross-checks.md#084-audit-of-the-tracing-facilities);
+the ICD itself is in [GSP RISC-V and PRISCV](06_gsp-riscv-and-priscv.md).
 
-## 8. Reading a failure
+## Reading a failure
 
 | Symptom | Meaning | Action |
 |---|---|---|
@@ -304,7 +339,7 @@ sampler is the worked example of instrumenting a boot stage. Evidence:
 | `0xbadf5040` | offset not implemented | wrong address or block |
 | `0x62` | GSP is fatal | one reboot; check the preceding Xid |
 
-## 9. Limits
+## Limits and open questions
 
 - Ten boot codes are mapped; the FSP/FMC error space is larger. `0xaff` carries
   only `additional info=0xb` on this build.
@@ -315,17 +350,38 @@ sampler is the worked example of instrumenting a boot stage. Evidence:
 - Sentinel low bytes are only partly decoded; the `0xBADF51` family is generic,
   not fuse-specific.
 - The PRISCV ICD is a diagnostic port, not a memory reader for the WPR, the boot
-  image, or the data segment (see [GSP RISC-V and PRISCV](../specs/06_gsp-riscv-and-priscv.md)).
+  image, or the data segment. See [GSP RISC-V and
+  PRISCV](06_gsp-riscv-and-priscv.md).
+- Open question: which stage raises the boot-time PL2 PRI refusals
+  (`0xBADF5128` at `0x137200`)? [The sentinel
+  analysis](../experiments/08_assessment-and-cross-checks.md#089-sentinel-and-raw-function-analysis)
+  does not identify it.
 
-## 10. Evidence map
+## Evidence map
 
 | Topic | Experiments |
 |---|---|
-| FMC/FSP boot codes | [E29–E41](../experiments/05_fmc-fsp-boot-inputs.md), [E61](../experiments/05_fmc-fsp-boot-inputs.md), [E62](../experiments/05_fmc-fsp-boot-inputs.md), [E69](../experiments/05_fmc-fsp-boot-inputs.md) |
-| `0x83d`, registry boot keys | [E11](../experiments/02_registry-and-static-audit.md) |
-| NV status codes | [E07](../experiments/01_software-register-writes.md), [E39](../experiments/05_fmc-fsp-boot-inputs.md), [E71](../experiments/01_software-register-writes.md) |
-| Sentinels and PRI telemetry | [E18](../experiments/03_fecs-and-gr-context.md), [E21](../experiments/04_hs-sec2-fsp-memory.md), [E60](../experiments/08_assessment-and-cross-checks.md), [E63](../experiments/04_hs-sec2-fsp-memory.md), [E67](../experiments/04_hs-sec2-fsp-memory.md) |
-| WPR fill `0xbad0ac00` | [E74](../experiments/05_fmc-fsp-boot-inputs.md) |
-| GSP log format and decoder | [E57](../experiments/08_assessment-and-cross-checks.md), [E59](../experiments/08_assessment-and-cross-checks.md), [E60](../experiments/08_assessment-and-cross-checks.md) |
-| Tracing facilities | [E55](../experiments/08_assessment-and-cross-checks.md) |
-| ICD rejections | [E67](../experiments/04_hs-sec2-fsp-memory.md) |
+| FMC/FSP boot codes | [FRTS size](../experiments/05_fmc-fsp-boot-inputs.md#054-frts-size-rejected-by-the-fsp), [misaligned base](../experiments/05_fmc-fsp-boot-inputs.md#057-misaligned-frts-base-draws-0xd6), [magic](../experiments/05_fmc-fsp-boot-inputs.md#0511-wprmeta-magic-enforced-verified-accepted), [hash](../experiments/05_fmc-fsp-boot-inputs.md#0516-cot-hash-authenticated-auth-failure-wedges), [container](../experiments/05_fmc-fsp-boot-inputs.md#0519-fmc-container-read-back-and-tampered), [bootloader](../experiments/05_fmc-fsp-boot-inputs.md#0523-wprmeta-bootloader-description-and-images) |
+| `0x83d`, registry boot keys | [boot-input keys](../experiments/02_registry-and-static-audit.md#022-boot-input-keys-change-what-the-fmc-receives) |
+| NV status codes | [crashed GSP](../experiments/01_software-register-writes.md#011-first-register-write-hits-a-crashed-gsp), [16 MiB heap](../experiments/05_fmc-fsp-boot-inputs.md#0514-16-mib-heap-request-wedges-the-boot), [GR_CTX rejected](../experiments/01_software-register-writes.md#017-per-context-registers-need-a-caller-owned-channel) |
+| Sentinels and PRI telemetry | [live probes](../experiments/03_fecs-and-gr-context.md#031-live-fecs-fsp-and-sec2-probes), [FSP EMEM](../experiments/04_hs-sec2-fsp-memory.md#042-fsp-emem-pointer-writes-are-dropped), [sentinel analysis](../experiments/08_assessment-and-cross-checks.md#089-sentinel-and-raw-function-analysis), [PRISCV split](../experiments/04_hs-sec2-fsp-memory.md#043-priscv-block-is-split-per-master), [live ICD](../experiments/04_hs-sec2-fsp-memory.md#044-priscv-icd-is-a-live-debug-port) |
+| WPR fill `0xbad0ac00` | [closed FB route](../experiments/05_fmc-fsp-boot-inputs.md#0525-fb-route-shut) |
+| GSP log format and decoder | [decoder](../experiments/08_assessment-and-cross-checks.md#086-gsp-log-decoding-without-the-metadata-elf), [live capture](../experiments/08_assessment-and-cross-checks.md#088-live-gsp-log-capture-and-decode), [sentinel analysis](../experiments/08_assessment-and-cross-checks.md#089-sentinel-and-raw-function-analysis) |
+| Tracing facilities | [tracing audit](../experiments/08_assessment-and-cross-checks.md#084-audit-of-the-tracing-facilities) |
+| ICD rejections | [live ICD](../experiments/04_hs-sec2-fsp-memory.md#044-priscv-icd-is-a-live-debug-port) |
+
+## Terms
+
+| Term | Meaning |
+|---|---|
+| FSP | Security processor that runs first out of reset |
+| FMC | First-stage mutable GPU firmware |
+| GSP-RM | Main GPU firmware |
+| WPR2 | Second write-protected region; armed before COT authentication |
+| EMEM | External memory port |
+| ICD | In-circuit debugger |
+| PRISCV | The GSP's RISC-V debug block |
+| PRI-ringstation | Register-return error path that produces the `0xBADF` values |
+| RM | NVIDIA's resource manager |
+| TOCTOU | Time-of-check to time-of-use |
+| MCTP | Management Component Transport Protocol |

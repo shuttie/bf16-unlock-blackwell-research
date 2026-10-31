@@ -1,21 +1,60 @@
-# Firmware formats
+# Firmware formats: containers, signatures, and the GSP-RM image
 
-This spec covers the firmware images the host hands to the GPU, their layouts,
-signatures, and the encrypted FMC. It is the reference layer for the boot-chain
-and plaintext-corpus experiments. Tags: `[measured]` on the two cards,
-`[source]` from public headers or vendor documentation, `[analogy]` carried over
-from Ampere/Ada. Unmarked statements are measured.
+## At a glance
 
-The images themselves are not redistributed. Every fact below is either inlined
-or linked to the experiment that produced it.
+- **Scope.** The firmware images the host hands to the GPU: the FMC container,
+  the signature envelope, `GspRmBoot`, the GSP-RM image, the inventory, and the
+  FMC key search.
+- **Bench.** Stock RTX 5090 (GB202, `10de:2b85`), driver and GSP-RM 595.91.07,
+  two cards, unless the sentence says otherwise. Format facts checked against
+  the linux-firmware sample say so.
+- **Evidence.** Measured claims link to the experiment that established them.
+  Claims from public headers or vendor documentation say so in the sentence. No
+  firmware image or key is redistributed.
 
-## 1. FMC container
+**The short version.**
+
+- The FMC is a `0x48`-byte plaintext header plus an encrypted body; the body is
+  code + data + a `0xA00` manifest, signed with P-384/SHA-384.
+- `GspRmBoot` is a raw encrypted 290,816-byte blob with no plaintext header.
+- The GSP-RM is a 72.8 MB RISC-V ELF with a plaintext `.fwimage` and per-chip
+  signature sections.
+- The FMC container is bound to the COT hash; a one-byte change draws `0x33`.
+- The FMC encryption mode and key remain unknown. The published MD5-IV key
+  family is exhausted on GB202 under the tested modes.
+
+**In this spec.**
+
+- [FMC container](#fmc-container)
+  - [Header](#header)
+  - [Body layout](#body-layout)
+  - [Entropy and variant separation](#entropy-and-variant-separation)
+  - [Host buffer and COT binding](#host-buffer-and-cot-binding)
+  - [What the FMC consumes](#what-the-fmc-consumes)
+- [Signature envelope](#signature-envelope)
+- [GspRmBoot](#gsprmboot)
+- [GSP-RM image](#gsp-rm-image)
+  - [Address model](#address-model)
+  - [Signed-image boundary](#signed-image-boundary)
+  - [Module map](#module-map)
+- [Firmware inventory](#firmware-inventory)
+- [FMC encryption and key search](#fmc-encryption-and-key-search)
+  - [The four layers](#the-four-layers)
+  - [The published test-key family](#the-published-test-key-family)
+  - [Why the first-block magic filter was wrong](#why-the-first-block-magic-filter-was-wrong)
+  - [What decryption buys](#what-decryption-buys)
+- [What remains open](#what-remains-open)
+- [Evidence map](#evidence-map)
+- [Terms](#terms)
+
+## FMC container
 
 The FMC is the first-stage mutable firmware. It is host-supplied, signed, and
-encrypted, and it runs in Heavy Secure. The production and debug variants share a
-plaintext wrapper and differ in the encrypted body. `[measured]`
+encrypted, and it runs in Heavy Secure. The production and debug variants share
+a plaintext wrapper and differ in the encrypted body. See [the FMC container
+format](../experiments/07_plaintext-corpus.md#074-fmc-container-format-and-signature).
 
-### 1.1 Header
+### Header
 
 The header is `0x48` bytes. All multi-byte fields are little-endian.
 
@@ -37,7 +76,7 @@ The first four dwords of the production header:
 Those are the magic/header size, body size `0x46200`, a reserved word, and code
 size `0x37000`.
 
-### 1.2 Body layout
+### Body layout
 
 The body is exactly `code + data + 0xA00` bytes in all 14 samples. The order is:
 
@@ -53,18 +92,19 @@ body[codeSize+dataSize : ]            manifest (0xA00)
       +----------------+----------------+----------------+
 ```
 
-The three regions match the matching `GspRmBoot` image byte-for-byte:
-`code` is a prefix of the bootloader's code, `data` matches
+The three regions match the matching `GspRmBoot` image byte-for-byte: `code` is
+a prefix of the bootloader's code, `data` matches
 `GspRmBoot[0xA00 : 0xA00+dataSize]`, and the `0xA00` residue matches
 `GspRmBoot[0 : 0xA00]`. The manifest is encrypted with the rest; there is no
-plaintext tail beyond the `0x48` header. `[measured]`
+plaintext tail beyond the `0x48` header. See [the FMC body
+layout](../experiments/07_plaintext-corpus.md#0710-the-fmc-key-search-comes-back-negative).
 
 Because the same component encrypts identically at different absolute offsets in
 the two images, there is no cross-component chaining. The mode is ECB or a
 per-component reset (CBC or CTR with an IV/counter that restarts per component).
-The first plaintext block of the body is code, not a container header. `[measured]`
+The first plaintext block of the body is code, not a container header.
 
-### 1.3 Entropy and variant separation
+### Entropy and variant separation
 
 | Property | Measurement |
 |---|---|
@@ -76,14 +116,15 @@ The first plaintext block of the body is code, not a container header. `[measure
 | Shared keystream | none |
 
 Signing is not decryption. The debug signing key is public; the debug encryption
-key is not in any package. `[measured]`
+key is not in any package.
 
-### 1.4 Host-supplied buffer and COT binding
+### Host buffer and COT binding
 
 The host places the container in unprotected sysmem at the COT's FMC address.
 Read-only samples after the copy-in, after the FSP response, and at memdesc
 release are byte-identical to the stock container on both cards. The FSP neither
-decrypts in place nor scrubs the buffer. `[measured]`
+decrypts in place nor scrubs the buffer. See [the tampered
+container](../experiments/05_fmc-fsp-boot-inputs.md#0519-fmc-container-read-back-and-tampered).
 
 A one-byte change while the COT hash, signature, and key stay stock is refused
 before boot:
@@ -95,20 +136,20 @@ before boot:
 
 `0x33` is distinct from the `0x377` hash failure. The order is: verify the
 signature over the claimed hash, then bind the image bytes to that hash. The
-binding covers the plaintext header as well as the encrypted body, so a corrupted
-ciphertext byte never reaches the decrypted image. `[measured]`
+binding covers the plaintext header as well as the encrypted body, so a
+corrupted ciphertext byte never reaches the decrypted image.
 
-### 1.5 What the FMC consumes from the host
+### What the FMC consumes
 
 After decryption the FMC is handed `GSP_FMC_BOOT_PARAMS` plus the COT. The host
 fills registry keys, the GSP-RM image descriptor and address, the boot-args
 pointer, SPDM parameters in confidential-compute mode, and the COT's addresses,
 sizes, hash, key, and signature. Every one is a 64-bit address or a 32-bit
-length consumed by code that runs before or after the hash/signature check.
-That is the parser surface. The container bytes are not part of it: they are
-bound to the COT hash. `[measured]`
+length consumed by code that runs before or after the hash/signature check. That
+is the parser surface. The container bytes are not part of it: they are bound to
+the COT hash.
 
-## 2. Signature envelope
+## Signature envelope
 
 The `0xF8` bytes before a signed container are:
 
@@ -123,32 +164,36 @@ publickey[97] || pad[7] || signature[96] || hash[48] || container
 | `signature[96]` | `r || s`, 48 bytes each |
 | `hash[48]` | SHA-384 over the entire container, header included |
 
-The encoding is ECDSA P-384 over SHA-384. Both signatures verify with OpenSSL:
+The encoding is ECDSA P-384 over SHA-384. Both shipped signatures verify with
+OpenSSL:
 
 ```bash
 openssl dgst -sha384 -verify pub.pem -signature sig.der container.bin
 # Verified OK
 ```
 
-Two keys ship in the retail package: `[measured]`
+Two keys ship in the retail package. See [the signature
+analysis](../experiments/07_plaintext-corpus.md#074-fmc-container-format-and-signature).
 
-| Key | First bytes | Signs |
-|---|---|---|
-| Production | `04 8b f1 18 bb …` | 4 containers, including the production FMC and the linux-firmware FMC |
-| Debug | `04 d3 0b d5 4b …` | 2 containers, including the debug FMC |
+| Key | Signs |
+|---|---|
+| Production | 4 containers, including the production FMC and the linux-firmware FMC |
+| Debug | 2 containers, including the debug FMC |
 
 The signature section of the GSP-RM image is separate. `.fwsignature_gb20x` is
 `0x1000` bytes: a 20-byte header (`0x00020001`, size `0x8c8`, count `0x0c`,
 `0x0101`, stride `0x200`) followed by four 384-byte high-entropy blocks on a
 `0x200` stride. It contains no SHA-384 of `.fwimage`, no valid P-384 point at any
 `0x04` candidate, and no block shared across the ten chip sections. The GSP-RM
-verification key is therefore fused or inside the FMC, not supplied by the image.
-`[measured]`
+verification key is therefore fused or inside the FMC, not supplied by the
+image. See [the COT key
+anchor](../experiments/05_fmc-fsp-boot-inputs.md#0518-cot-public-key-anchored).
 
-## 3. GspRmBoot
+## GspRmBoot
 
 `GspRmBoot` is the bootloader image the host supplies alongside the FMC. It is a
-raw encrypted blob, not an FMC-style container. `[measured]`
+raw encrypted blob, not an FMC-style container. See [the bootloader
+description](../experiments/05_fmc-fsp-boot-inputs.md#0523-wprmeta-bootloader-description-and-images).
 
 | Property | Value |
 |---|---|
@@ -163,16 +208,19 @@ raw encrypted blob, not an FMC-style container. `[measured]`
 The `WprMeta` bootloader geometry is: manifest at offset 0, data at `0xA00`, code
 at `0xF200`, signature buffer `0x1000`. The host buffer is byte-identical before
 the FMC reads it and after GSP-RM is up, so the FMC does not decrypt it in place
-and does not scrub it. `[measured]`
+and does not scrub it. See [the bootloader
+buffer](../experiments/05_fmc-fsp-boot-inputs.md#0524-bootloader-buffer-not-decrypted-in-place).
 
-## 4. GSP-RM image
+## GSP-RM image
 
 The GSP-RM is the main GPU firmware. It is a 72,830,976-byte RISC-V ELF with a
 large plaintext `.fwimage` and per-chip signature sections. The same image is
 shared across GA10x, AD10x, and GB20x; Blackwell behavior is selected by chip
-tables inside the image. `[source]` `[measured]`
+tables inside the image. The driver package and the local image show this; see
+[the PL3 component
+inventory](../experiments/07_plaintext-corpus.md#071-pl3-components-in-the-driver-package).
 
-### 4.1 Address model
+### Address model
 
 ```text
 .fwimage file                 72,830,976 B
@@ -189,9 +237,10 @@ Ghidra VA                     link VA + 0x18F000
 
 The loaded image is not identity-mapped at host framebuffer physical address
 `0x01000000`; that address reads zero. The backing is in the write-protected
-region. A Ghidra address is a file address, not a runtime address. `[measured]`
+region. A Ghidra address is a file address, not a runtime address. See [the live
+ICD read window](../experiments/04_hs-sec2-fsp-memory.md#044-priscv-icd-is-a-live-debug-port).
 
-### 4.2 Signed-image boundary
+### Signed-image boundary
 
 A single-instruction patch is rejected before the image runs:
 
@@ -201,12 +250,13 @@ Fatal GSP-FMC Error: version=0x1, partition=0x1, error code=0xaff, additional in
 
 A four-byte change at the entry of the FEAT readout decoder is enough. The
 per-chip signature section carries no host key, so there is no key-substitution
-target in the image. `[measured]`
+target in the image. See [the patched-image
+test](../experiments/05_fmc-fsp-boot-inputs.md#052-patched-gsp-rm-image-rejected-by-the-fmc).
 
-### 4.3 Module map
+### Module map
 
 The local static split has 69 module files. Function counts are for navigation,
-not ground truth. `[source]`
+not ground truth.
 
 | Module | Functions | Notes |
 |---|---:|---|
@@ -231,14 +281,14 @@ getter's nine bytes. A second implementation, `FUN_ram_015ff1dc`, is selected fo
 descriptor variants `{5…9}` and reads `0x9668` instead. `FUN_ram_01615a40`
 extracts the DP byte from `FEAT_READOUT_1[30:28]`. The per-chip HAL initializer
 `FUN_ram_01c1c374` installs the decoder at `obj+0xC20` and the context functions
-at `obj+0xD00`. The decoder is table-installed code, not dead code. `[measured]`
+at `obj+0xD00`. The decoder is table-installed code, not dead code. See [the
+decoder audit](../experiments/07_plaintext-corpus.md#078-the-decoder-is-installed-by-the-hal).
 
 The reference audit is a useful trap: a scan that only looks for literal
 addresses misses the negative 20-bit `auipc` immediate. Five materializations sit
 inside the initializer. Absence of a literal is not evidence of dead code.
-`[measured]`
 
-## 5. Firmware inventory
+## Firmware inventory
 
 | Artifact | Size | Format / measurement |
 |---|---:|---|
@@ -255,15 +305,16 @@ inside the initializer. Absence of a literal is not evidence of dead code.
 | SEC2 secure scrub AD10X | 6,233 B | Ada only |
 | Board vBIOS | 819,200 B dumped of >= 876,544 B | encrypted microcode; no FWSEC entries |
 | PROM head blob | 218 KiB | encrypted; plaintext board metadata follows |
-| FSP / GSP BootROM | — | no image in any package; immutable ROM |
+| FSP / GSP BootROM | n/a | no image in any package; immutable ROM |
 
 The FSP and BootROM never appear in a driver package or firmware bundle. The
 obtainable images are the board vBIOS, the encrypted FMC, the encrypted
-GspRmBoot, and the plaintext GSP-RM. `[measured]`
+`GspRmBoot`, and the plaintext GSP-RM. See [the PL3 component
+inventory](../experiments/07_plaintext-corpus.md#071-pl3-components-in-the-driver-package).
 
-## 6. FMC encryption and key search
+## FMC encryption and key search
 
-### 6.1 The four layers
+### The four layers
 
 | Layer | What it is | Crypto | Key | Recoverable |
 |---|---|---|---|---|
@@ -271,12 +322,13 @@ GspRmBoot, and the plaintext GSP-RM. `[measured]`
 | GSP BootROM | immutable ROM | ROM | fused | no |
 | FMC | host-loaded HS bootloader; `0x48` header + encrypted body; ECDSA P-384/SHA-384 | mode unknown: no ECB repeats, no nonce, entropy 7.999 | debug key for the debug FMC; production likely `csecret(6)` in SCP | only software target |
 | SEC2 booter | HS booter; GA100/GA102/AD102 debug images | AES-128-ECB | test key #37 (MD5-IV permutation) | yes on those parts; negative on GB202 |
-| GSP-RM | post-boot RISC-V firmware | plaintext | — | available |
+| GSP-RM | post-boot RISC-V firmware | plaintext | n/a | available |
 
-The production `csecret(6)` is held in SCP hardware and is not
-software-recoverable. The debug FMC is the only software-key target. `[source]`
+The FSP and BootROM rows come from public documentation; the FMC and SEC2 rows
+come from the local images. The production `csecret(6)` is held in SCP hardware
+and is not software-recoverable. The debug FMC is the only software-key target.
 
-### 6.2 The published test-key family
+### The published test-key family
 
 The older SEC2 debug booters use AES-128-ECB with test key #37, a permutation of
 the 16 MD5 initialization-vector bytes. The public known-answer test is:
@@ -285,7 +337,8 @@ the 16 MD5 initialization-vector bytes. The public known-answer test is:
 AES-ECB(key37, 00 * 16) = 717d1494eaca317ff106195258b38377
 ```
 
-The full permutation space is `16! = 20,922,789,888,000` keys. `[source]`
+The full permutation space is `16! = 20,922,789,888,000` keys. See [the GA100
+key test](../experiments/07_plaintext-corpus.md#075-the-ga100-test-key-does-not-fit).
 
 On GB202 the family does not reproduce. The corrected exhaustive passes:
 
@@ -301,14 +354,15 @@ The FMC passes test five hypotheses per key: ECB (mode 0), CBC with a zero IV
 (1), CBC with the container header as IV (3), CTR start 0 (2), and CTR start 1
 (4). Three chance records were written across both containers; the full-code
 RISC-V verifier rejected all three at 8.6–8.9% invalid instructions, the random
-rate. `[measured]`
+rate. See [the FMC key
+search](../experiments/07_plaintext-corpus.md#0710-the-fmc-key-search-comes-back-negative).
 
 The debug GB202 (`c09`) and `0x30500` (`c11`) FMCs are not decrypted by any
 MD5-IV permutation under ECB, per-component CBC with a zero or header IV, or CTR
 with counter start 0 or 1. The IV-permutation avenue is exhausted for the FMC
-under the tested modes. `[measured]`
+under the tested modes.
 
-### 6.3 Why the first-block magic filter was wrong
+### Why the first-block magic filter was wrong
 
 The body starts with code. The earlier FMC oracle accepted a candidate only if
 its first decrypted block looked like a container or compression header. A
@@ -323,20 +377,23 @@ on the plaintext GSP-RM code segment:
 - Rate: 8.5 G keys/s per 5090 with Stage 2; 6.0 G keys/s with all five modes.
 - Controls: the rank-0 synthetic key is recovered in every mode; random
   plaintext is rejected; the full-code walk accepts the synthetic at 0.046%
-  invalid and rejects a random key at 8.8%. `[measured]`
+  invalid and rejects a random key at 8.8%.
 
-### 6.4 What decryption buys
+See [the FMC key
+search](../experiments/07_plaintext-corpus.md#0710-the-fmc-key-search-comes-back-negative).
+
+### What decryption buys
 
 The FMC is the PL3 bootloader that parses the COT and `WprMeta` and loads the
 GSP-RM. Its code is the static PL3 corpus: parsers, copy routines, and gadgets.
 Production and debug code are identical, so the debug FMC is enough for static
 analysis. It does not give execution on a retail card, which still needs debug
-fuse state, and it does not give the production key. `[measured]`
+fuse state, and it does not give the production key.
 
 No key was recovered. Do not read the negative searches as a partial key or a
 pending release.
 
-## 7. Limits
+## What remains open
 
 - The FMC encryption mode and key remain unknown. The negative results cover the
   MD5-IV permutation family under the tested modes, not every AES mode or key
@@ -347,20 +404,39 @@ pending release.
 - The FSP and GSP BootROM have no obtainable image; their behavior is inferred
   from the boot protocol and the host-side error codes.
 
-## 8. Evidence map
+## Evidence map
 
 | Fact | Experiment |
 |---|---|
-| FMC header, body algebra, component identity | [E05](../experiments/07_plaintext-corpus.md), [E73](../experiments/07_plaintext-corpus.md) |
-| Container/COT binding, tamper response | [E62](../experiments/05_fmc-fsp-boot-inputs.md) |
-| Signature envelope and keys | [E05](../experiments/07_plaintext-corpus.md), [E61](../experiments/05_fmc-fsp-boot-inputs.md) |
-| GspRmBoot size, entropy, authentication | [E68](../experiments/04_hs-sec2-fsp-memory.md), [E69](../experiments/05_fmc-fsp-boot-inputs.md), [E72](../experiments/05_fmc-fsp-boot-inputs.md) |
-| GSP-RM address model | [E67](../experiments/04_hs-sec2-fsp-memory.md) |
-| Patched-image rejection | [E15](../experiments/05_fmc-fsp-boot-inputs.md) |
-| Module map and decoder | [E17](../experiments/07_plaintext-corpus.md) |
-| Test-key family and FMC search | [E06](../experiments/07_plaintext-corpus.md), [E73](../experiments/07_plaintext-corpus.md) |
-| Inventory and availability | [E02](../experiments/07_plaintext-corpus.md), [E05](../experiments/07_plaintext-corpus.md) |
+| FMC header, body algebra, component identity | [07.4 FMC container](../experiments/07_plaintext-corpus.md#074-fmc-container-format-and-signature), [07.10 FMC body](../experiments/07_plaintext-corpus.md#0710-the-fmc-key-search-comes-back-negative) |
+| Container/COT binding, tamper response | [05.19 tampered container](../experiments/05_fmc-fsp-boot-inputs.md#0519-fmc-container-read-back-and-tampered) |
+| Signature envelope and keys | [07.4 FMC container](../experiments/07_plaintext-corpus.md#074-fmc-container-format-and-signature), [05.18 key anchor](../experiments/05_fmc-fsp-boot-inputs.md#0518-cot-public-key-anchored) |
+| GspRmBoot size, entropy, authentication | [04.5 boot-window gate](../experiments/04_hs-sec2-fsp-memory.md#045-boot-window-icd-route-is-blocked), [05.23 bootloader description](../experiments/05_fmc-fsp-boot-inputs.md#0523-wprmeta-bootloader-description-and-images), [05.24 bootloader buffer](../experiments/05_fmc-fsp-boot-inputs.md#0524-bootloader-buffer-not-decrypted-in-place) |
+| GSP-RM address model | [04.4 live ICD window](../experiments/04_hs-sec2-fsp-memory.md#044-priscv-icd-is-a-live-debug-port) |
+| Patched-image rejection | [05.2 patched image](../experiments/05_fmc-fsp-boot-inputs.md#052-patched-gsp-rm-image-rejected-by-the-fmc) |
+| Module map and decoder | [07.8 decoder audit](../experiments/07_plaintext-corpus.md#078-the-decoder-is-installed-by-the-hal) |
+| Test-key family and FMC search | [07.5 GA100 key test](../experiments/07_plaintext-corpus.md#075-the-ga100-test-key-does-not-fit), [07.10 FMC key search](../experiments/07_plaintext-corpus.md#0710-the-fmc-key-search-comes-back-negative) |
+| Inventory and availability | [07.1 PL3 components](../experiments/07_plaintext-corpus.md#071-pl3-components-in-the-driver-package), [07.4 FMC container](../experiments/07_plaintext-corpus.md#074-fmc-container-format-and-signature) |
 
-Related specs: [boot chain](../specs/01_boot-chain.md), [register map](../specs/03_register-map.md).
+Related specs: [boot chain](01_boot-chain.md), [register map](03_register-map.md).
 Extraction and search tools: [FMC tools](../tools/fmc-tools/),
 [GSP-RM tools](../tools/gsp-rm-tools/).
+
+## Terms
+
+| Term | Meaning |
+|---|---|
+| FSP | Security processor that runs first out of reset, from immutable ROM |
+| FMC | First-stage mutable GPU firmware; host-supplied, signed, encrypted; runs at PL3 |
+| GSP-RM | Main GPU firmware; host-supplied, signed, plaintext; runs at PL2 |
+| `GspRmBoot` | Bootloader image supplied alongside the FMC |
+| COT | Chain-of-trust message from the host to the FSP |
+| `.fwimage` | Plaintext code and data image inside the GSP-RM ELF |
+| HS | Heavy Secure, the PL3 privilege level |
+| SCP | Secure coprocessor that holds the production `csecret(6)` |
+| WPR2 | Second write-protected region; armed before COT authentication |
+| ELF | Executable and linkable format |
+| P-384 / SHA-384 | Elliptic curve and hash used by the COT and FMC signatures |
+| ECDSA | Elliptic Curve Digital Signature Algorithm |
+| AES | Advanced Encryption Standard |
+| ECB / CBC / CTR | Block-cipher modes tested on the FMC body |

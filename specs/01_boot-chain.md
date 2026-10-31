@@ -357,9 +357,9 @@ pass](../experiments/08_assessment-and-cross-checks.md#087-static-pass-over-feat
   is a GSP reset. On GB100 that reset requires the level-0 read and write
   enables in `NV_PGSP_FALCON_RESET_PRIV_LEVEL_MASK` (`0x1103c4`). At cold boot
   those bits are clear, and only running GSP firmware clears them. The host
-  cannot reset the GSP it needs to reset in order to boot it. A failed attempt
-  leaves an ioctl that never returns, so treat it as one-shot. See [the
-  boot-input keys](../experiments/02_registry-and-static-audit.md#022-boot-input-keys-change-what-the-fmc-receives).
+  cannot reset the GSP it needs to reset to boot it. A failed attempt leaves an
+  ioctl that never returns, so treat it as one-shot. See [the boot-input
+  keys](../experiments/02_registry-and-static-audit.md#022-boot-input-keys-change-what-the-fmc-receives).
 - **SEC2 hardware is present but empty.** DMEM `0x8401c0`/`0x8401c4` is a real
   port and `AINCR` advances it, but the first 8 KiB is zero. IMEM is blocked to
   the host (`0xbadf5720`) and the GSP (`0xbadf5723`). EMEM reads
