@@ -12,31 +12,31 @@
   [GSP-RM](../specs/01_boot-chain.md), the GPU's main firmware, at
   [PL2](../specs/02_privilege-and-rate-control.md).
 
-**The instrument.**
-
-- [`NV2080_CTRL_CMD_GPU_EXEC_REG_OPS`](../tools/register-access/) (`0x20800122`),
-  an exported control.
-- A root client names a [BAR0](../specs/07_memory-and-host-access.md) offset;
-  GSP-RM performs the access at PL2.
-- It is the cleanest test of the PL2/PL3 boundary from userspace.
-
 **What it found.**
 
 - Every register in the [FEAT bank](../specs/03_register-map.md) has the same
-  write gate.
-- Accepted FEAT writes return success and read back unchanged.
+  write gate ([01.3 The whole FEAT bank shares one gate](#013-the-whole-feat-bank-shares-one-gate)).
+- FEAT writes through the control return success and read back unchanged
+  ([01.2 Speed-register write from GSP is dropped](#012-speed-register-write-from-gsp-is-dropped)).
 - The [permission mask](../specs/02_privilege-and-rate-control.md) admits writes
-  from [PL3](../specs/02_privilege-and-rate-control.md) only, the level where
-  NVIDIA's boot firmware runs.
-- The FUSE shadow and the rate modifier do not accept a useful write.
-- The post-reset window closes too early, and the per-context types are
-  rejected.
+  from [PL3](../specs/02_privilege-and-rate-control.md) only
+  ([01.5 The permission mask admits PL3 writes only](#015-the-permission-mask-admits-pl3-writes-only)); the PL2 drop is
+  [01.2 Speed-register write from GSP is dropped](#012-speed-register-write-from-gsp-is-dropped).
+- The FUSE shadow and the rate modifier do not accept a useful write
+  ([01.4 The fuse shadow and the inert modifier](#014-the-fuse-shadow-and-the-inert-modifier)).
+- The post-reset window closes too early
+  ([01.6 The post-reset window closes before GSP-RM](#016-the-post-reset-window-closes-before-gsp-rm)), and the per-context
+  types are rejected
+  ([01.7 Per-context registers need a caller-owned channel](#017-per-context-registers-need-a-caller-owned-channel)).
 
 **What it did not find.**
 
-- No software path writes the selector.
+- No software path writes the selector
+  ([01.2 Speed-register write from GSP is dropped](#012-speed-register-write-from-gsp-is-dropped),
+  [01.3 The whole FEAT bank shares one gate](#013-the-whole-feat-bank-shares-one-gate)).
 - The old route reaches `SS0`/`SS1` from a boot image at PL3, and that is still
-  the only route.
+  the only route
+  ([01.5 The permission mask admits PL3 writes only](#015-the-permission-mask-admits-pl3-writes-only)).
 
 ## Experiments
 
@@ -117,20 +117,22 @@ Xid 120: GSP task exception: load access page fault (cause:0xd) @ pc:0x1368618,
 
 - **Answer:** no measurement. The control returned `0x62` on every invocation, so
   the write was never tested.
-- `0x62` is `NV_ERR_RESET_REQUIRED`; `_kgspRpcSanityCheck` returns it for every
-  RPC once the GSP is fatal, so it says nothing about the requested write
-  ([errors and logging](../specs/08_errors-and-logging.md)).
-- The parameterless getter still returned `NV_OK` because the host driver caches
-  the nine selectors at GR init
-  ([privilege and rate control](../specs/02_privilege-and-rate-control.md)).
-- `GET_NAME_STRING` returned `0x1F` (`NV_ERR_INVALID_ARGUMENT`), a normal argument
-  error rather than a reset error, so the RM still answered host-side controls.
-- **Limit:** the BAR0 page scan `0x300000`–`0x400000` ran in the same window, but
-  causation with the crash is not established; `c1:00.0` faulted 7 s later at the
-  same PC. Treat the aperture as a hazard; [memory and host
-  access](../specs/07_memory-and-host-access.md) has the recovery note.
-- **What we got:** the failure mode of an RPC to a fatal GSP, not a write result.
-  The clean rerun is [01.2](#012-speed-register-write-from-gsp-is-dropped).
+- **What we learned:**
+  - `0x62` is `NV_ERR_RESET_REQUIRED`; `_kgspRpcSanityCheck` returns it for every
+    RPC once the GSP is fatal, so it says nothing about the requested write
+    ([errors and logging](../specs/08_errors-and-logging.md)).
+  - The parameterless getter still returned `NV_OK` because the host driver caches
+    the nine selectors at GR init
+    ([privilege and rate control](../specs/02_privilege-and-rate-control.md)).
+  - `GET_NAME_STRING` returned `0x1F` (`NV_ERR_INVALID_ARGUMENT`), a normal
+    argument error rather than a reset error, so the RM still answered host-side
+    controls.
+- **Related:** [01.2 Speed-register write from GSP is dropped](#012-speed-register-write-from-gsp-is-dropped)
+  is the clean rerun that supplies the actual write test.
+- **Open question:** the BAR0 page scan `0x300000`–`0x400000` ran in the same
+  window, but the crash cause is not established; `c1:00.0` faulted 7 s later at
+  the same PC. The aperture is a hazard regardless ([memory and host
+  access](../specs/07_memory-and-host-access.md) has the recovery note).
 
 ## 01.2 Speed-register write from GSP is dropped
 
@@ -182,17 +184,19 @@ and the register did not move.
 **Result.**
 
 - **Answer:** the path works; the FEAT write is dropped.
-- The scratch write changes and restores, the GSP reads match the host BAR0
-  reads, and both writes return success.
-- The FEAT register reads back `0x21240001`, unchanged.
-- The drop is silent: [`regStatus = SUCCESS`](../specs/08_errors-and-logging.md)
-  cannot distinguish applied from dropped; only the readback can.
-- **Limit:** the value written was 0, not the `0x88888888` payload the 4090
-  unlock writes. `SS0 = 0` clears every enable bit, so this tests the gate, not a
-  rate change.
-- **What we got:** the negative/positive control pair later claims use. The mask
-  decode is [01.5](#015-the-permission-mask-admits-pl3-writes-only); the rest of
-  the bank is [01.3](#013-the-whole-feat-bank-shares-one-gate).
+- **What we learned:**
+  - The scratch write changes and restores, the GSP reads match the host BAR0
+    reads, and both writes return success.
+  - The FEAT register reads back `0x21240001`, unchanged.
+  - The drop is silent: [`regStatus = SUCCESS`](../specs/08_errors-and-logging.md)
+    cannot distinguish applied from dropped; only the readback can.
+  - The negative/positive control pair and the readback rule are the method later
+    register claims use.
+  - The test wrote 0, not the `0x88888888` payload. `SS0 = 0` clears every enable
+    bit, so it exercises the gate, not a rate change.
+- **Related:** [01.3 The whole FEAT bank shares one gate](#013-the-whole-feat-bank-shares-one-gate)
+  tests the rest of the bank; [01.5 The permission mask admits PL3 writes
+  only](#015-the-permission-mask-admits-pl3-writes-only) decodes the mask.
 
 ## 01.3 The whole FEAT bank shares one gate
 
@@ -201,7 +205,7 @@ admits PL0 or PL2 writes?
 
 **Why.**
 
-- `SS0` was dropped ([01.2](#012-speed-register-write-from-gsp-is-dropped)); a
+- `SS0` was dropped ([01.2 Speed-register write from GSP is dropped](#012-speed-register-write-from-gsp-is-dropped)); a
   different register in the same bank might have a looser gate.
 - `0x82380c = 0x00888888` looked like an active override; the 4090 payload uses
   `0x88888888`.
@@ -271,18 +275,21 @@ unrelated `0x8230xx` registers.
 
 **Result.**
 
-- **Answer:** no. All 50 map ops returned `SUCCESS`; unimplemented offsets read
-  `0xBADF5040`
-  ([errors and logging](../specs/08_errors-and-logging.md)); the `0x88888888`
-  write returned `SUCCESS` and the readback stayed `0x00888888`.
-- No register in `0x823800`–`0x8238b0` has a different gate.
-- The driver only references `0x823814` in the ECC check; the targeted scan found
-  no speed-register writer.
-- **Limit:** `0x82380c` is `FEAT_OVR_ECC`, the stock ECC override, not a speed
-  word ([the plaintext corpus](../experiments/07_plaintext-corpus.md)). This tests
-  the bank, not `SS0` ([01.2](#012-speed-register-write-from-gsp-is-dropped)).
-- **What we got:** the gate belongs to the whole bank, not one register. There is
-  no ungated register to reach through.
+- **Answer:** no. All 50 map ops returned `SUCCESS`; the `0x88888888` write
+  returned `SUCCESS` and the readback stayed `0x00888888`.
+- **What we learned:**
+  - Unimplemented offsets read `0xBADF5040`
+    ([errors and logging](../specs/08_errors-and-logging.md)).
+  - No register in `0x823800`–`0x8238b0` has a different gate.
+  - The driver only references `0x823814` in the ECC check; the targeted scan
+    found no speed-register writer.
+  - The bank map is in [the register map](../specs/03_register-map.md).
+    `0x82380c` is `FEAT_OVR_ECC`, the stock ECC override, not a speed word
+    ([the plaintext corpus](../experiments/07_plaintext-corpus.md)).
+  - This tests the bank, not the selector.
+- **Related:** [01.2 Speed-register write from GSP is dropped](#012-speed-register-write-from-gsp-is-dropped)
+  tests `SS0`; [01.5 The permission mask admits PL3 writes
+  only](#015-the-permission-mask-admits-pl3-writes-only) decodes the gate.
 
 ## 01.4 The fuse shadow and the inert modifier
 
@@ -357,14 +364,20 @@ The register log read 0 at all 17 stages.
 
 - **Answer:** both are dead ends. The FUSE writes are dropped from both levels;
   the rate modifier is writable but reasserted and inert.
-- The FUSE page-0 mask appears to allow writes from every level, but the shadow
-  is not writable; the effective gate is below the PLM.
-- `SM_ISSUE_RATE_MODIFIER` is writable and reasserted to 5 at CUDA context
-  creation. Holding it at 0 does not move the measured rate.
-- **Limit:** the probe has no FP16-accumulate mode, so it cannot measure the cap
-  ratio locally.
-- **What we got:** the FUSE shadow is not an alternate gate, and the rate
-  modifier is not a selector.
+- **What we learned:**
+  - The FUSE page-0 mask appears to allow writes from every level, but the
+    shadow is not writable; the effective gate is below the PLM.
+  - `SM_ISSUE_RATE_MODIFIER` is writable and reasserted to 5 at CUDA context
+    creation. Holding it at 0 does not move the measured rate.
+  - The hash-pinned probe with the register held at 0 is the method for testing a
+    register's effect on the measured rate.
+  - The probe has no FP16-accumulate mode, so it cannot measure the cap ratio
+    locally.
+- **Related:** the rate modifier is documented in
+  [privilege and rate control](../specs/02_privilege-and-rate-control.md); the
+  FUSE shadow's gate has no dedicated experiment.
+- **Open question:** where the FUSE shadow's effective gate sits below the PLM is
+  not located.
 
 ## 01.5 The permission mask admits PL3 writes only
 
@@ -400,6 +413,7 @@ Ada comparison            = 0xffffff8f
 
 - **Answer:** the mask is a Falcon v4 privilege mask. The write field
   `[7:4] = 8` admits PL3 writes only.
+- **What we learned:**
 
 | Bits | Field | `0xfffffb8f` | Ada `0xffffff8f` |
 |---|---|---|---|
@@ -411,14 +425,17 @@ Ada comparison            = 0xffffff8f
 | `11` | `SOURCE_WRITE_CONTROL` | 1 = blocked | same |
 | `31:12` | `SOURCE_ENABLE` | `0xfffff` (**all 20 sources**) | same |
 
-- There is no removed source and no hidden `[23:8]` source-enable field. The
-  source-enable field is `[31:12]` and is fully populated.
+- No removed source and no hidden `[23:8]` source-enable field. The source-enable
+  field is `[31:12]` and is fully populated.
 - Bit 10 is `SOURCE_READ_CONTROL`, a read-side control, not a writer.
-- **Limit:** the FEAT block is not in the public headers. The low byte matches
-  Falcon v4 exactly; the fields above it are applied by analogy. The decode says
-  which writes are admitted, not what the hardware does with a passing write.
-- **What we got:** the gate is PL3, matching the PL2 drop in
-  [01.2](#012-speed-register-write-from-gsp-is-dropped).
+- The low byte matches Falcon v4 exactly; the fields above it are applied by
+  analogy.
+- **Related:** [01.2 Speed-register write from GSP is dropped](#012-speed-register-write-from-gsp-is-dropped)
+  sees the PL2 write dropped; [01.6 The post-reset window closes before
+  GSP-RM](#016-the-post-reset-window-closes-before-gsp-rm) measures the post-FLR
+  value, which admits PL2 and PL3.
+- **Open question:** what the hardware does with a write that passes the mask; no
+  experiment exercises a passing write.
 
 ## 01.6 The post-reset window closes before GSP-RM
 
@@ -481,20 +498,22 @@ The boot-image PC (`0xefd00000`–`0xefd47000`) was not sampled in either run.
 
 - **Answer:** no. The window is 1156–1323 ms; it closes 1853 ms before GSP-RM
   starts.
-- The bind consumes about 1.0 s of the window; the open→GSP-RM path is about
-  2.1 s, longer than the window even with a zero-delay open.
-- The re-lock is a pre-boot GPU-side devinit (FSP/PMU/hardware), not the FMC or
-  GSP-RM. [The boot-input
-  experiments](../experiments/05_fmc-fsp-boot-inputs.md) bracket it.
-- The "boot the GSP early" variant is retracted; the GSP boot path is longer than
-  the window. `benign` and `payload` were not run because they cannot win and
-  would only cost an FLR.
-- **Limit:** this measures the window and re-lock time, not the writer.
-  [The cold-boot experiment](../experiments/05_fmc-fsp-boot-inputs.md) covers the
-  per-boot SS state. The FLR can wedge the card; the
-  [driver harness](../tools/driver-harness/) README has the recovery note.
-- **What we got:** the window is real but unusable. The PL2 master does not exist
-  while it is open.
+- **What we learned:**
+  - The bind consumes about 1.0 s of the window; the open→GSP-RM path is about
+    2.1 s, longer than the window even with a zero-delay open.
+  - The re-lock is a pre-boot GPU-side devinit (FSP/PMU/hardware), not the FMC or
+    GSP-RM
+    ([the boot-input experiments](../experiments/05_fmc-fsp-boot-inputs.md)
+    bracket it).
+  - The "boot the GSP early" variant is retracted; `benign` and `payload` were not
+    run because they cannot win and would only cost an FLR.
+  - The re-mapping BAR0 poller and race harness time the window without touching
+    the driver.
+- **Related:** [the cold-boot
+  experiment](../experiments/05_fmc-fsp-boot-inputs.md) covers the per-boot SS
+  state; [the boot-window
+  experiment](../experiments/04_hs-sec2-fsp-memory.md) covers the boot-image PC.
+- **Open question:** the exact devinit that performs the re-lock is not named.
 
 ## 01.7 Per-context registers need a caller-owned channel
 
@@ -504,9 +523,9 @@ through `GR_CTX` and the other typed regtypes?
 **Why.**
 
 - Earlier passes used `GLOBAL` only
-  ([01.2](#012-speed-register-write-from-gsp-is-dropped),
-  [01.3](#013-the-whole-feat-bank-shares-one-gate),
-  [01.4](#014-the-fuse-shadow-and-the-inert-modifier)); a per-SM route might have
+  ([01.2 Speed-register write from GSP is dropped](#012-speed-register-write-from-gsp-is-dropped),
+  [01.3 The whole FEAT bank shares one gate](#013-the-whole-feat-bank-shares-one-gate),
+  [01.4 The fuse shadow and the inert modifier](#014-the-fuse-shadow-and-the-inert-modifier)); a per-SM route might have
   a different gate.
 - The per-SM selector path is described in
   [privilege and rate control](../specs/02_privilege-and-rate-control.md).
@@ -574,17 +593,21 @@ start.
 
 - **Answer:** the type is recognized but the batch is rejected before execution;
   `FB` is unsupported.
-- `GR_CTX` variants return `0x1f`; `FB` returns `0x56`; a CUDA context and every
-  route flag give the same result
-  ([errors and logging](../specs/08_errors-and-logging.md)).
-- The leading explanation is a channel owned by the calling RM client. A CUDA
-  channel is not addressable: RM handles are client-scoped, the CUDA client's
-  handle is not exposed, and the `hClientTarget=0` expansion is not implemented
-  for context ops on this build.
-- **Limit:** testing the explanation needs a channel owned by the calling client
-  (VA space, GPFIFO, UserD, bind/schedule, a mini RM client) or a kernel hook; the
-  GSP may still reject it. The type is recognized; the caller-owned channel
-  question is open.
-- **What we got:** the cheap [PL0](../specs/02_privilege-and-rate-control.md)
-  route is closed. The answer to the per-SM question needs a caller-owned
-  channel.
+- **What we learned:**
+  - `GR_CTX` variants return `0x1f`; `FB` returns `0x56`; a CUDA context and every
+    route flag give the same result
+    ([errors and logging](../specs/08_errors-and-logging.md)).
+  - The ctrl-table handler pointer does not resolve to a function start.
+  - `gprobe`/`gprobe_route` and the CUDA-context harness are the typed-regtype
+    probe method.
+  - A CUDA channel is not addressable: RM handles are client-scoped, the CUDA
+    client's handle is not exposed, and the `hClientTarget=0` expansion is not
+    implemented for context ops on this build.
+- **Related:** the earlier `GLOBAL` passes are
+  [01.2 Speed-register write from GSP is dropped](#012-speed-register-write-from-gsp-is-dropped),
+  [01.3 The whole FEAT bank shares one gate](#013-the-whole-feat-bank-shares-one-gate),
+  and [01.4 The fuse shadow and the inert modifier](#014-the-fuse-shadow-and-the-inert-modifier).
+- **Open question:** would a channel owned by the calling client succeed? Testing
+  it needs a mini RM client (VA space, GPFIFO, UserD, bind/schedule) or a kernel
+  hook; the GSP may still reject it.
+
