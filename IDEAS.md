@@ -51,8 +51,9 @@
 ## Override payload format
 
 **Where it comes from.** The full-rate readout and fuse target is measured on
-two RTX PRO 6000s: `FEAT_READOUT_1 = 0`, every arithmetic speed fuse at 0, and
-518 TF/s BF16 with the FP16-accumulate rate equal ([the reference
+two RTX PRO 6000s: both read `FEAT_READOUT_1 = 0` with every arithmetic speed
+fuse at 0, and card A runs BF16 at 518 TF/s with the FP16-accumulate rate equal
+([the reference
 dump](experiments/08_assessment-and-cross-checks.md#0810-an-rtx-pro-6000-reference-dump)).
 Both cards also have every `SS0`/`SS1` enable bit clear, so the full rate comes
 from the fuses, not a live override. The override payload format is the
@@ -357,7 +358,7 @@ command sets it. High effort, no hardware.
 ## Closed, do not retry
 
 - The all-zero full-rate target. Two PRO 6000s read `FEAT_READOUT_1 = 0` with
-  every arithmetic speed fuse at 0 and run BF16 at 518 TF/s; do not re-plan
+  every arithmetic speed fuse at 0; one runs BF16 at 518 TF/s. Do not re-plan
   around the A100 inference ([the reference
   dump](experiments/08_assessment-and-cross-checks.md#0810-an-rtx-pro-6000-reference-dump)).
 - More 16! MD5-IV key passes. The family is exhausted under ECB, CBC-zero and
