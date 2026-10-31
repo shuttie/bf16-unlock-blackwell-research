@@ -372,8 +372,9 @@ The register log read 0 at all 17 stages.
     creation. Holding it at 0 does not move the measured rate.
   - The hash-pinned probe with the register held at 0 is the method for testing a
     register's effect on the measured rate.
-  - The probe has no FP16-accumulate mode, so it cannot measure the cap ratio
-    locally.
+  - [The probe](../tools/issue-rate-probe/) now has an FP16-accumulate mode, but
+    this run and the 5090 baseline do not use it; the 5090 has no local
+    FP16-accumulate measurement.
 - **Related:**
   - The rate modifier is documented in
     [privilege and rate control](../specs/02_privilege-and-rate-control.md).

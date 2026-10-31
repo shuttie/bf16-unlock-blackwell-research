@@ -6,9 +6,12 @@ and [3090](https://github.com/Zagitta/gpu-unlock) cards.
 
 1. **Can I unlock my 5090?** Not yet. Blackwell uses a completely different boot
    process, so the 3090/4090 exploits don't work.
-2. **Is it the silicon?** No. The same [GB202](../specs/03_register-map.md) die
+2. **Is it the silicon?** No. The same [GB202](specs/03_register-map.md) die
    runs BF16 at full rate in the [RTX PRO
-   6000](../specs/02_privilege-and-rate-control.md#the-cap-is-product-segmentation).
+   6000](specs/02_privilege-and-rate-control.md#the-cap-is-product-segmentation);
+   I measured 518 TF/s and [`FEAT_READOUT_1 =
+   0`](experiments/08_assessment-and-cross-checks.md#0810-an-rtx-pro-6000-reference-dump)
+   on one.
 3. **What's in the repo?**
    - [the cap, and how the 3090/4090 unlock worked](#the-cap-and-the-30904090-unlock)
    - [Blackwell's boot chain and why the old route is closed](#blackwells-boot-chain-and-why-the-old-route-is-closed)
@@ -23,6 +26,9 @@ and [3090](https://github.com/Zagitta/gpu-unlock) cards.
 - Host driver and GPU firmware 595.91.07, compute capability 12.0, CUDA 13 on
   Linux, 575 W.
 - Experiments ran 2026-10-25 to 2026-10-29.
+- Reference run: one RTX PRO 6000 Blackwell Workstation Edition (same GB202 die,
+  `10de:2bb1`), 96 GB, driver and GSP-RM 615.71.09, CUDA 13.2, 500 W,
+  2026-10-31.
 
 This is research. I'm not redistributing NVIDIA firmware.
 
@@ -30,10 +36,10 @@ This is research. I'm not redistributing NVIDIA firmware.
 
 **The cap.** A consumer 5090 uses the same GB202 die as an RTX PRO 6000. NVIDIA
 sells the consumer card with a 1/2 throughput limit on the
-[FP32-accumulate path](../specs/02_privilege-and-rate-control.md#the-cap-is-product-segmentation).
+[FP32-accumulate path](specs/02_privilege-and-rate-control.md#the-cap-is-product-segmentation).
 Every BF16 tensor op uses that path, so BF16 lands at half rate. The limit is a
 fuse-programmed [3-bit
-selector](../specs/02_privilege-and-rate-control.md#selector-encoding). The
+selector](specs/02_privilege-and-rate-control.md#selector-encoding). The
 professional card runs the same path at full rate.
 
 **The chain.** From fuse to issue rate:
@@ -45,9 +51,9 @@ professional card runs the same path at full rate.
 ```
 
 `SS0` and `SS1` are the override words in the [FEAT register
-bank](../specs/03_register-map.md#feat-bank). [FECS/GPCCS](../specs/03_register-map.md#fecs)
+bank](specs/03_register-map.md#feat-bank). [FECS/GPCCS](specs/03_register-map.md#fecs)
 is the GPU's front-end and context-switch microcode; SM is the streaming
-multiprocessor. The [PLM](../specs/02_privilege-and-rate-control.md#privilege-levels-and-the-plm)
+multiprocessor. The [PLM](specs/02_privilege-and-rate-control.md#privilege-levels-and-the-plm)
 is the bank's read/write permission mask; on the 5090 its write field admits only
 PL3, the level where NVIDIA's boot firmware runs.
 
@@ -58,12 +64,15 @@ PL3, the level where NVIDIA's boot firmware runs.
 | BF16 → FP32 issue rate | 222.8 TF/s | ai.rs, driver 610.57.04 |
 | FP16 → FP32 issue rate | 224.3 TF/s | ai.rs, driver 610.57.04 |
 | FP16 → FP16 issue rate | 441.4 TF/s | ai.rs, driver 610.57.04 |
-| RTX PRO 6000 | 503.8 TF/s | NVIDIA whitepaper, not measured |
+| RTX PRO 6000, BF16 → FP32 | 518.0 TF/s | my run, driver 615.71.09; whitepaper 503.8 |
+| RTX PRO 6000, FP16 → FP16 | 515.0 TF/s | same run |
 | BF16 cuBLAS GEMM 8192³ | 234.8 TF/s | 5090 D, different SKU |
 
 My two cards measure 226.6 and 229.6 TF/s on the BF16 → FP32 path on 595.91.07.
-The local probe has no FP16-accumulate mode, so the ~2× ratio is inferred from the
-ai.rs number.
+On the PRO 6000 the same probe measured 518.0 TF/s BF16 → FP32 and 515.0 TF/s
+with an FP16 accumulator; the vendor whitepaper's 503.8 is within 3% of the
+first. The 5090 has no local FP16-accumulate measurement, so its 441.4 TF/s
+comes from ai.rs.
 
 ### How the 3090/4090 unlock worked
 
@@ -83,16 +92,16 @@ work on GB202: it gives no known-answer match, and the full 16! search over the
 key's [permutation family came back
 empty](experiments/07_plaintext-corpus.md#0710-the-fmc-key-search-comes-back-negative).
 
-- A kernel module starts a signed [SEC2](../specs/01_boot-chain.md#sec2) boot
+- A kernel module starts a signed [SEC2](specs/01_boot-chain.md#sec2) boot
   image. SEC2 is the GPU's security coprocessor.
 - The booter copies signature data with a length the host controls.
 - The copy overflows the stack. A ROP chain (return-oriented programming), built
   from instructions already in the signed image, takes over.
-- It writes [`FEAT_OVR_PLM`](../specs/03_register-map.md#write-gate) to open the
-  bank, then [`SS0`](../specs/03_register-map.md#ss0-and-ss1) = `0x88888888` and
-  [`SS1`](../specs/03_register-map.md#ss0-and-ss1) = `0x8`.
+- It writes [`FEAT_OVR_PLM`](specs/03_register-map.md#write-gate) to open the
+  bank, then [`SS0`](specs/03_register-map.md#ss0-and-ss1) = `0x88888888` and
+  [`SS1`](specs/03_register-map.md#ss0-and-ss1) = `0x8`.
 - A [PCI function-level reset
-  (FLR)](../specs/02_privilege-and-rate-control.md#privilege-levels-and-the-plm)
+  (FLR)](specs/02_privilege-and-rate-control.md#privilege-levels-and-the-plm)
   resets the card; the stock driver binds; the override stays.
 
 ```
@@ -148,12 +157,12 @@ Three things changed, and together they close the old route:
 
 That leaves PL3. A GSP-RM bug is not enough because GSP-RM runs at PL2; a host
 write is not enough because the host is PL0. The host-facing surfaces at PL3 are
-the [FSP message parser](../specs/01_boot-chain.md#fsp-command-surface), the [FMC
-boot-parameter parser](../specs/01_boot-chain.md#wprmeta), and the
-[suspend/resume page table](../specs/01_boot-chain.md#suspendresume). A bug in one
+the [FSP message parser](specs/01_boot-chain.md#fsp-command-surface), the [FMC
+boot-parameter parser](specs/01_boot-chain.md#wprmeta), and the
+[suspend/resume page table](specs/01_boot-chain.md#suspendresume). A bug in one
 of those is the remaining class.
 
-The [vBIOS](../specs/05_vbios-and-devinit.md) is not a shortcut either. Its
+The [vBIOS](specs/05_vbios-and-devinit.md) is not a shortcut either. Its
 plaintext init tables [do not name the
 FEAT block](experiments/05_fmc-fsp-boot-inputs.md#0522-vbios-devinit-table-scan),
 and the tables that do exist are authenticated in Heavy Secure.
@@ -165,14 +174,14 @@ the experiment record with the commands and artifacts.
 
 | What I did | Result | Status | Records |
 |---|---|---|---|
-| Wrote the speed registers from the host window and from GSP firmware; tried the [fuse shadow](../specs/03_register-map.md#fuse-and-otp) and the graphics engine's [rate register](../specs/02_privilege-and-rate-control.md#the-rm-getter-and-the-host-view) | Success returned, writes dropped; the rate register is writable but reasserted and inert | Dead, measured | [register writes](experiments/01_software-register-writes.md) |
+| Wrote the speed registers from the host window and from GSP firmware; tried the [fuse shadow](specs/03_register-map.md#fuse-and-otp) and the graphics engine's [rate register](specs/02_privilege-and-rate-control.md#the-rm-getter-and-the-host-view) | Success returned, writes dropped; the rate register is writable but reasserted and inert | Dead, measured | [register writes](experiments/01_software-register-writes.md) |
 | Used the driver's registry knobs (`RMOverrideSmSpeedSelect*`, `RMDisableFeatureDisablement`) | Parsed and stored, no rate or bank change | Dead, measured | [registry keys](experiments/02_registry-and-static-audit.md) |
-| Poked the GPU command ring ([FECS doorbell](../specs/03_register-map.md#fecs) and [graphics engine context buffers](../specs/03_register-map.md#sm-and-gr)) | Payloads are addresses and sizes, no selector field | Dead, measured/static | [FECS and context](experiments/03_fecs-and-gr-context.md) |
-| Read firmware memory (GSP, FSP, and SEC2 local memory; [RISC-V debug engine](../specs/06_gsp-riscv-and-priscv.md#priscv-register-map)) | Local memory empty or locked to PL3; the debug engine reads the 14.4 MB GSP-RM code segment after a halt, not secure memory or the WPR | Dead or diagnostic | [secure memory](experiments/04_hs-sec2-fsp-memory.md) |
-| Fed the boot firmware bad input (the host-built [boot descriptors](../specs/01_boot-chain.md#wprmeta)) | Ten structured error codes, control over where firmware lands in VRAM, authentication enforced | Live input, no exploit | [boot inputs](experiments/05_fmc-fsp-boot-inputs.md) |
-| Hooked suspend/resume (the host-built [descriptor and page table](../specs/01_boot-chain.md#suspendresume)) | Page table is plaintext; saved state is encrypted per boot and card | Live structure, no exploit yet | [suspend/resume](experiments/06_sr-resume.md) |
-| Edited the [vBIOS](../specs/05_vbios-and-devinit.md) and its [init tables](../specs/05_vbios-and-devinit.md#devinit-authentication), including the no-flash loader route | No FEAT address in plaintext, tables authenticated, custom route tops out at PL2 | Dead, static | [vBIOS](experiments/07_plaintext-corpus.md#073-the-vbios-has-no-feat-address), [devinit](experiments/05_fmc-fsp-boot-inputs.md#0522-vbios-devinit-table-scan) |
-| Raced the reset (the [PL2-writable window](../specs/02_privilege-and-rate-control.md#privilege-levels-and-the-plm) after an FLR) | Window is 1.32 s; the re-lock lands 1.85 s before GSP-RM starts | Dead, measured | [reset window](experiments/01_software-register-writes.md#016-the-post-reset-window-closes-before-gsp-rm) |
+| Poked the GPU command ring ([FECS doorbell](specs/03_register-map.md#fecs) and [graphics engine context buffers](specs/03_register-map.md#sm-and-gr)) | Payloads are addresses and sizes, no selector field | Dead, measured/static | [FECS and context](experiments/03_fecs-and-gr-context.md) |
+| Read firmware memory (GSP, FSP, and SEC2 local memory; [RISC-V debug engine](specs/06_gsp-riscv-and-priscv.md#priscv-register-map)) | Local memory empty or locked to PL3; the debug engine reads the 14.4 MB GSP-RM code segment after a halt, not secure memory or the WPR | Dead or diagnostic | [secure memory](experiments/04_hs-sec2-fsp-memory.md) |
+| Fed the boot firmware bad input (the host-built [boot descriptors](specs/01_boot-chain.md#wprmeta)) | Ten structured error codes, control over where firmware lands in VRAM, authentication enforced | Live input, no exploit | [boot inputs](experiments/05_fmc-fsp-boot-inputs.md) |
+| Hooked suspend/resume (the host-built [descriptor and page table](specs/01_boot-chain.md#suspendresume)) | Page table is plaintext; saved state is encrypted per boot and card | Live structure, no exploit yet | [suspend/resume](experiments/06_sr-resume.md) |
+| Edited the [vBIOS](specs/05_vbios-and-devinit.md) and its [init tables](specs/05_vbios-and-devinit.md#devinit-authentication), including the no-flash loader route | No FEAT address in plaintext, tables authenticated, custom route tops out at PL2 | Dead, static | [vBIOS](experiments/07_plaintext-corpus.md#073-the-vbios-has-no-feat-address), [devinit](experiments/05_fmc-fsp-boot-inputs.md#0522-vbios-devinit-table-scan) |
+| Raced the reset (the [PL2-writable window](specs/02_privilege-and-rate-control.md#privilege-levels-and-the-plm) after an FLR) | Window is 1.32 s; the re-lock lands 1.85 s before GSP-RM starts | Dead, measured | [reset window](experiments/01_software-register-writes.md#016-the-post-reset-window-closes-before-gsp-rm) |
 
 [The FMC debug-key search](experiments/07_plaintext-corpus.md#0710-the-fmc-key-search-comes-back-negative)
 is negative too: three known-answer variants and both debug containers over all
@@ -183,39 +192,23 @@ files](experiments/) and [the raw log](RAW_EXPERIMENT_LOG.md).
 
 ## Where it stands
 
-The four surfaces I would probe next, in order:
-
-1. **[The suspend/resume page
-   table](experiments/06_sr-resume.md#064-the-radix3-is-plaintext-and-fully-mapped).**
-   On resume, secure firmware walks a [three-level
-   table](../specs/01_boot-chain.md#suspendresume) the host builds, before it
-   decrypts the saved state. A malformed entry is the last structural probe. A
-   failed resume hangs with no host log, so this needs a network console or phase
-   markers first.
-2. **[The FSP message
-   framing](experiments/08_assessment-and-cross-checks.md#087-static-pass-over-feat-and-fsp).**
-   The host controls the [transmit
-   length](../specs/01_boot-chain.md#fsp-command-surface), and the reply's task
-   and command identity is not checked. A malformed-length packet is the
-   remaining test.
-3. **The two remaining boot-descriptor sizes.** `fbSize` and `nonWprHeapSize` are
-   the layout fields I did not vary ([the `WprMeta` field
-   matrix](experiments/05_fmc-fsp-boot-inputs.md#0511-wprmeta-magic-enforced-verified-accepted)).
-   One of them may move the protected region in the other direction.
-4. **[The per-SM context register
-   space](experiments/01_software-register-writes.md#017-per-context-registers-need-a-caller-owned-channel).**
-   The cheap host route is closed. Testing it needs a channel owned by the calling
-   driver client, and the GSP may still reject it.
+The open leads, ranked by the decision each one buys, are in [Open
+leads](IDEAS.md). The short version: the FEAT and selector target is validated
+([the reference
+dump](experiments/08_assessment-and-cross-checks.md#0810-an-rtx-pro-6000-reference-dump));
+next are the vBIOS app `0x23` tail and the suspend/resume saved state, then the
+boot-input race. The parser and per-SM probes follow.
 
 The [RISC-V debug
 engine](experiments/04_hs-sec2-fsp-memory.md#044-priscv-icd-is-a-live-debug-port)
-is no longer on this list. A register sweep at the boot-image halt could explain
+is no longer on that list. A register sweep at the boot-image halt could explain
 why its memory read is gated, but it cannot read the image.
 
 **Not viable.**
 
 - A [GSP-RM bug](experiments/01_software-register-writes.md#012-speed-register-write-from-gsp-is-dropped)
-  as a write path. PL2 is too late.
+  as a direct FEAT write path. PL2 is too late; a patched GSP-RM is still a
+  foothold for other probes ([Open leads](IDEAS.md)).
 - [vBIOS flashing](experiments/07_plaintext-corpus.md#073-the-vbios-has-no-feat-address).
   It is signed.
 - Fuse editing. The boot fuse check fails.
@@ -224,22 +217,24 @@ why its memory read is gated, but it cannot read the image.
   state](experiments/07_plaintext-corpus.md#071-pl3-components-in-the-driver-package).
   There is no retail path.
 
-Two different things are missing:
+One measurement and one primitive were missing. I now have the measurement.
 
-- The missing measurement: a full-rate GB202's [FEAT
-  readout](../specs/03_register-map.md#readout-decode),
-  [`SS0`/`SS1`](../specs/03_register-map.md#ss0-and-ss1), and [fuse
-  block](../specs/03_register-map.md#fuse-and-otp). That tells me what to aim for.
-- The missing primitive: code execution at PL3. That is how the selector gets
-  written. A PRO 6000 dump does not unlock the card.
+- A PRO 6000 reads [`FEAT_READOUT_1 =
+  0`](specs/03_register-map.md#readout-decode) with every arithmetic speed fuse
+  at 0, and runs BF16 → FP32 at 518 TF/s, equal to its FP16-accumulate rate
+  ([the reference
+  dump](experiments/08_assessment-and-cross-checks.md#0810-an-rtx-pro-6000-reference-dump)).
+  That is what to aim for.
+- The missing primitive is code execution at PL3. That is how the selector gets
+  written. The dump gives the target; it does not unlock the card.
 
 **What would count as an unlock:**
 
 - The driver's [rate
-  getter](../specs/02_privilege-and-rate-control.md#the-rm-getter-and-the-host-view)
+  getter](specs/02_privilege-and-rate-control.md#the-rm-getter-and-the-host-view)
   reports the capped field clear.
 - [BF16 issue
-  rate](../specs/02_privilege-and-rate-control.md#the-cap-is-product-segmentation)
+  rate](specs/02_privilege-and-rate-control.md#the-cap-is-product-segmentation)
   near 440 TF/s, with a matched BF16 GEMM and numerical validation.
 - The override survives an FLR, a driver reload, and a device enable. The driver
   loads without GPU or GSP errors.
@@ -292,9 +287,10 @@ affiliated with NVIDIA.
 The text is CC BY 4.0. Tool source is MIT, except `tools/issue-rate-probe/` and
 `tools/fmc-tools/`, which are GPL-2.0-only. See [LICENSE](LICENSE).
 
-If you own an RTX PRO 6000, I would like one thing: a dump of the FEAT readout
-(`FEAT_READOUT_1`), the two selector words (`SS0`/`SS1`), and the fuse block. That
-is the one external measurement that would change the plan.
+The PRO 6000 reference dump is in [the
+assessment](experiments/08_assessment-and-cross-checks.md#0810-an-rtx-pro-6000-reference-dump).
+A second card or a cold-boot sample of its `SS0`/`SS1` words would still help
+with the boot variance.
 
 Corrections are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md). Point me at an
 experiment record or a command that reproduces the problem.

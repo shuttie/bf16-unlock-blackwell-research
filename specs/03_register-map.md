@@ -5,12 +5,15 @@
 - **Scope.** The GB202 register blocks: chip and boot targets, FUSE/OTP, FEAT,
   FECS, SM/GR, GSP Falcon, PRISCV, FSP, SEC2, PMU/CMS2, and the bad-read
   sentinels.
-- **Bench.** Two RTX 5090s (GB202, `10de:2b85`), driver and GSP-RM 595.91.07. All
-  offsets are BAR0 byte offsets; values are stock unless the row says per-card,
-  per-boot, or unresolved.
+- **Bench.** Two RTX 5090s (GB202, `10de:2b85`), driver and GSP-RM 595.91.07,
+  and one RTX PRO 6000 Blackwell reference (same GB202 die, `10de:2bb1`,
+  615.71.09). All offsets are BAR0 byte offsets; the 5090 values are stock
+  unless the row says per-card, per-boot, or unresolved.
 - **Evidence.** Measured values link to the experiment that produced them.
   Cross-part values come from the public survey in [the external
-  corpus](../experiments/08_assessment-and-cross-checks.md#085-external-cross-part-register-corpus);
+  corpus](../experiments/08_assessment-and-cross-checks.md#085-external-cross-part-register-corpus),
+  except the PRO 6000 column, which is measured ([the reference
+  dump](../experiments/08_assessment-and-cross-checks.md#0810-an-rtx-pro-6000-reference-dump));
   fields described as analogy are carried over from Ada/Ampere.
 - **Terms.** PL0, PL2, and PL3 are the host, GSP-RM, and boot-firmware privilege
   levels; a PLM is a per-block read/write permission mask; EMEM is external
@@ -23,6 +26,8 @@
   writability oracle.
 - The FEAT bank has one write gate, `FEAT_OVR_PLM`, and it admits PL3 writes
   only.
+- A PRO 6000 reads all-zero selectors and all-zero arithmetic speed fuses; its
+  FEAT bank keeps the same PL3-only write gate.
 - `SM_ISSUE_RATE_MODIFIER` is writable but reasserted at context init and inert.
 - FECS has a writable doorbell (`0x409800`) but no selector field.
 - The GSP Falcon and PRISCV blocks expose EMEM and a live ICD; the ICD reads the
@@ -119,20 +124,24 @@ analysis](../experiments/08_assessment-and-cross-checks.md#089-sentinel-and-raw-
 
 ### Cross-part fuse values
 
-| Fuse | A100 | Consumer Ampere | GB202 / GB203M |
-|---|---:|---:|---:|
-| `FUSE_SS_FMLA32` | **0** | `1` | **`3`** |
-| `FUSE_SS_IMLA4` | **0** | `1` | **`3`** |
-| `FUSE_SS_IMLA2` | **0** | `0` | **`3`** |
-| `FUSE_SS_IMLA1` | **0** | `0` | **`3`** |
-| all other `FUSE_SS_*` | **0** | `0` | `0` |
+| Fuse | A100 | Consumer Ampere | GB202 / GB203M | PRO 6000 |
+|---|---:|---:|---:|---:|
+| `FUSE_SS_FMLA32` | **0** | `1` | **`3`** | **`0`** |
+| `FUSE_SS_IMLA4` | **0** | `1` | **`3`** | **`0`** |
+| `FUSE_SS_IMLA2` | **0** | `0` | **`3`** | **`0`** |
+| `FUSE_SS_IMLA1` | **0** | `0` | **`3`** | **`0`** |
+| all other `FUSE_SS_*` | **0** | `0` | `0` | **`0`** |
 
-The values come from a public cross-part survey reproduced in [the external
-corpus](../experiments/08_assessment-and-cross-checks.md#085-external-cross-part-register-corpus).
-A100 is a full-rate part and reads zero on every arithmetic speed fuse. Consumer
-Ampere reads `1` on `FMLA32`/`IMLA4`; Ada reads `1` on `FMLA32`/`IMLA4` and
-`IMLA2`. GB202 reads `3` on `FMLA32`/`IMLA1`/`IMLA2`/`IMLA4`. The Blackwell
-code→rate law is not proven; see [privilege and rate
+The A100, Consumer Ampere, and GB203M values come from a public cross-part
+survey reproduced in [the external
+corpus](../experiments/08_assessment-and-cross-checks.md#085-external-cross-part-register-corpus);
+the PRO 6000 column is measured ([the reference
+dump](../experiments/08_assessment-and-cross-checks.md#0810-an-rtx-pro-6000-reference-dump)).
+A100 is a full-rate part and reads zero on every arithmetic speed fuse; the PRO
+6000 reads the same zeros on GB202. Consumer Ampere reads `1` on
+`FMLA32`/`IMLA4`; Ada reads `1` on `FMLA32`/`IMLA4` and `IMLA2`. The consumer
+GB202 reads `3` on `FMLA32`/`IMLA1`/`IMLA2`/`IMLA4`. The Blackwell code→rate law
+is not proven for the nonzero values; see [privilege and rate
 control](../specs/02_privilege-and-rate-control.md).
 
 ## FEAT bank
@@ -159,6 +168,13 @@ and above return `0xBADF5040`. The bank map and the failed write are from [the
 whole-bank test](../experiments/01_software-register-writes.md#013-the-whole-feat-bank-shares-one-gate);
 the `0x82380c` identity is from [the external
 corpus](../experiments/08_assessment-and-cross-checks.md#085-external-cross-part-register-corpus).
+
+The 5090 values above are the stock consumer map. The measured PRO 6000 reads
+the same `0x823800`/`0x823804` PLMs (`0xfffffb8f`) and `0x82380c`
+(`0x00888888`); the words that differ are in [the cross-part
+table](#cross-part-feat-values). Its ID at `0x8238b0` is `0x1c5f331f`
+([the reference
+dump](../experiments/08_assessment-and-cross-checks.md#0810-an-rtx-pro-6000-reference-dump)).
 
 ### Write gate
 
@@ -196,6 +212,10 @@ decode](../experiments/01_software-register-writes.md#015-the-permission-mask-ad
 | `imla4` | `24:22` | **`3`** |
 | DP | `30:28` | `0` |
 
+A PRO 6000 reads `0x00000000`: every field is zero. That is the measured
+full-rate reference for this decode ([the reference
+dump](../experiments/08_assessment-and-cross-checks.md#0810-an-rtx-pro-6000-reference-dump)).
+
 Bit 6 is the alternate ninth byte, not an unexplained gap ([the static
 FEAT/FSP pass](../experiments/08_assessment-and-cross-checks.md#087-static-pass-over-feat-and-fsp)).
 The decoder is a per-chip HAL method that reads fuse HAL offset `0x3818`; the
@@ -211,15 +231,19 @@ The two words are runtime state, not per-part fuses:
 |---|---|---|
 | `41:00.0` | `0x21240001`, `0x20240001`, `0x20260041`, `0x21265047`, `0x21265043` | `0x00000002`, `0x00000006` |
 | `c1:00.0` | `0x54226037`, `0x54224037`, `0x54225037`, `0x54226037` | `0x00026005`, `0x00024005` |
+| PRO 6000 | `0x56664061` (one boot) | `0x00075005` |
 
-Every nibble has bit 3 clear, so the override-enable fields are off and the fused
-selectors are in force. The words are invariant within a boot and across warm
+Every nibble has bit 3 clear on the 5090 samples and on the PRO 6000 snapshot, so
+the override-enable fields are off and the fused selectors are in force. The
+words are invariant within a boot and across warm
 reboots; they move only across cold power cycles. They are already final before
 the FMC runs, as [the FEAT-bank boot
 test](../experiments/05_fmc-fsp-boot-inputs.md#0517-feat-bank-final-before-the-fmc)
 and [the cold-boot/FLR
 comparison](../experiments/05_fmc-fsp-boot-inputs.md#0520-feat-bank-across-boots-and-flr)
-show.
+show. The PRO 6000 snapshot is one power-on and does not show the cold-boot
+spread ([the reference
+dump](../experiments/08_assessment-and-cross-checks.md#0810-an-rtx-pro-6000-reference-dump)).
 
 An FLR leaves `SS0`/`SS1`, `0x823808`, and `READOUT_1` unchanged, but resets the
 PLM pair to `0x80842bcf` (write mask L2+L3). A GPU-side devinit re-locks it to
@@ -234,29 +258,34 @@ test](../experiments/05_fmc-fsp-boot-inputs.md#0521-plm-re-lock-is-autonomous-de
 - `0x823810 = 0x002a2aaa` is `FEAT_OVR_ECC_1`.
 - `0x823824/28/2c = 3/1/0xa` are `FEAT_OVR_ROW_REMAP`/`FEAT_READOUT_2`/
   `FEAT_OVR_ECC_2`, static feature words, not counters.
+- The PRO 6000 reads `0xaa2a2aaa` at `0x823810` and `0x022aaaaa` at `0x82382c`.
+  Those track its ECC feature set, not the rate selector.
 
 ### Cross-part FEAT values
 
-| Register | Offset | GB202 | Consumer GA10x | A100 | RTX 3090 Ti |
-|---|---|---:|---:|---:|---:|
-| `FEAT_OVR_ECC_PLM` | `0x823800` | `0xfffffb8f` | `0xffffff8f` | `0xffffff8f` | `0xffffff8f` |
-| `FEAT_OVR_PLM` | `0x823804` | `0xfffffb8f` | `0xffffff8f` | `0xffffff8f` | `0xffffff8f` |
-| `FEAT_OVR_QUADRO` | `0x823808` | `0x01000280` / `0x01000380` | varies | `0x00000080`–`0x01100080` | `0x01000383` |
-| `FEAT_OVR_ECC` | `0x82380c` | `0x00888888` | `0x00888888` | `0x00000100`–`0x00110111` | `0x00888888` |
-| `FEAT_OVR_ECC_1` | `0x823810` | `0x002a2aaa` | `0x002aaaaa` | `0x00100400`–`0x00104104` | `0x00aaaaaa` |
-| `FEAT_READOUT_0` | `0x823814` | `0x00000233` | `0x00000233` | `0xef8ff100` | `0x00000233` |
-| `FEAT_READOUT_1` | `0x823818` | `0x00c36180` | `0x00400080` | **`0x00000000`** | `0x00400080` |
-| `FEAT_OVR_SM_SPD` | `0x82381c` | per-card | varies | varies | `0x30403100` |
-| `FEAT_OVR_SM_SPD_1` | `0x823820` | per-card | varies | varies | `0x00000004` |
-| `FEAT_OVR_ROW_REMAP` | `0x823824` | `0x3` | `0x1` | `0x0`/`0x1` | `0x3` |
-| `FEAT_READOUT_2` | `0x823828` | `0x1` | `0x0` | `0x7` | `0x1` |
-| `FEAT_OVR_ECC_2` | `0x82382c` | `0xa` | `0x8`/`0xa` | `0x0`/`0x1` | `0xa` |
+| Register | Offset | GB202 | Consumer GA10x | A100 | RTX 3090 Ti | PRO 6000 (GB202) |
+|---|---|---:|---:|---:|---:|---:|
+| `FEAT_OVR_ECC_PLM` | `0x823800` | `0xfffffb8f` | `0xffffff8f` | `0xffffff8f` | `0xffffff8f` | `0xfffffb8f` |
+| `FEAT_OVR_PLM` | `0x823804` | `0xfffffb8f` | `0xffffff8f` | `0xffffff8f` | `0xffffff8f` | `0xfffffb8f` |
+| `FEAT_OVR_QUADRO` | `0x823808` | `0x01000280` / `0x01000380` | varies | `0x00000080`–`0x01100080` | `0x01000383` | `0x01900888` |
+| `FEAT_OVR_ECC` | `0x82380c` | `0x00888888` | `0x00888888` | `0x00000100`–`0x00110111` | `0x00888888` | `0x00888888` |
+| `FEAT_OVR_ECC_1` | `0x823810` | `0x002a2aaa` | `0x002aaaaa` | `0x00100400`–`0x00104104` | `0x00aaaaaa` | `0xaa2a2aaa` |
+| `FEAT_READOUT_0` | `0x823814` | `0x00000233` | `0x00000233` | `0xef8ff100` | `0x00000233` | `0x00000300` |
+| `FEAT_READOUT_1` | `0x823818` | `0x00c36180` | `0x00400080` | **`0x00000000`** | `0x00400080` | **`0x00000000`** |
+| `FEAT_OVR_SM_SPD` | `0x82381c` | per-card | varies | varies | `0x30403100` | `0x56664061` (one boot) |
+| `FEAT_OVR_SM_SPD_1` | `0x823820` | per-card | varies | varies | `0x00000004` | `0x00075005` (one boot) |
+| `FEAT_OVR_ROW_REMAP` | `0x823824` | `0x3` | `0x1` | `0x0`/`0x1` | `0x3` | `0x3` |
+| `FEAT_READOUT_2` | `0x823828` | `0x1` | `0x0` | `0x7` | `0x1` | `0x1` |
+| `FEAT_OVR_ECC_2` | `0x82382c` | `0xa` | `0x8`/`0xa` | `0x0`/`0x1` | `0xa` | `0x022aaaaa` |
 
-The values are from the public cross-part survey reproduced in [the external
-corpus](../experiments/08_assessment-and-cross-checks.md#085-external-cross-part-register-corpus).
-The A100 SXM4 40 GB is the only `0x823800` outlier at `0x0000abcf`. A100 is the
-full-rate reference: `FEAT_READOUT_1 = 0` with every arithmetic fuse at `0`. No
-full-rate GB202 dump exists.
+The GB202, Consumer GA10x, A100, and RTX 3090 Ti values are from the public
+cross-part survey reproduced in [the external
+corpus](../experiments/08_assessment-and-cross-checks.md#085-external-cross-part-register-corpus);
+the PRO 6000 column is measured ([the reference
+dump](../experiments/08_assessment-and-cross-checks.md#0810-an-rtx-pro-6000-reference-dump)).
+The A100 SXM4 40 GB is the only `0x823800` outlier at `0x0000abcf`. The A100 and
+the PRO 6000 are the full-rate references: `FEAT_READOUT_1 = 0` with every
+arithmetic fuse at `0`.
 
 ## FECS
 
@@ -493,7 +522,7 @@ The error-code taxonomy is in
 
 | Block | Experiments | Tool |
 |---|---|---|
-| FUSE / FEAT | [FEAT bank gate](../experiments/01_software-register-writes.md#013-the-whole-feat-bank-shares-one-gate), [fuse and rate modifier](../experiments/01_software-register-writes.md#014-the-fuse-shadow-and-the-inert-modifier), [mask decode](../experiments/01_software-register-writes.md#015-the-permission-mask-admits-pl3-writes-only), [cross-part corpus](../experiments/08_assessment-and-cross-checks.md#085-external-cross-part-register-corpus), [FEAT across boots](../experiments/05_fmc-fsp-boot-inputs.md#0520-feat-bank-across-boots-and-flr), [re-lock](../experiments/05_fmc-fsp-boot-inputs.md#0521-plm-re-lock-is-autonomous-devinit) | [Register access](../tools/register-access/), [Direct probe](../tools/direct-probe/) |
+| FUSE / FEAT | [FEAT bank gate](../experiments/01_software-register-writes.md#013-the-whole-feat-bank-shares-one-gate), [fuse and rate modifier](../experiments/01_software-register-writes.md#014-the-fuse-shadow-and-the-inert-modifier), [mask decode](../experiments/01_software-register-writes.md#015-the-permission-mask-admits-pl3-writes-only), [cross-part corpus](../experiments/08_assessment-and-cross-checks.md#085-external-cross-part-register-corpus), [PRO 6000 reference](../experiments/08_assessment-and-cross-checks.md#0810-an-rtx-pro-6000-reference-dump), [FEAT across boots](../experiments/05_fmc-fsp-boot-inputs.md#0520-feat-bank-across-boots-and-flr), [re-lock](../experiments/05_fmc-fsp-boot-inputs.md#0521-plm-re-lock-is-autonomous-devinit) | [Register access](../tools/register-access/), [Direct probe](../tools/direct-probe/), [Issue-rate probe](../tools/issue-rate-probe/) |
 | FECS / SM | [live FECS probe](../experiments/03_fecs-and-gr-context.md#031-live-fecs-fsp-and-sec2-probes), [rate modifier](../experiments/01_software-register-writes.md#014-the-fuse-shadow-and-the-inert-modifier) | [Register access](../tools/register-access/) |
 | GSP Falcon / PRISCV | [GSP EMEM](../experiments/04_hs-sec2-fsp-memory.md#041-gsp-emem-is-real-but-empty), [PRISCV map](../experiments/04_hs-sec2-fsp-memory.md#043-priscv-block-is-split-per-master), [live ICD](../experiments/04_hs-sec2-fsp-memory.md#044-priscv-icd-is-a-live-debug-port), [boot window](../experiments/04_hs-sec2-fsp-memory.md#045-boot-window-icd-route-is-blocked) | [Register access](../tools/register-access/), [Direct probe](../tools/direct-probe/), [Driver harness](../tools/driver-harness/) |
 | FSP / SEC2 | [live FECS/SEC2 probe](../experiments/03_fecs-and-gr-context.md#031-live-fecs-fsp-and-sec2-probes), [FSP EMEM](../experiments/04_hs-sec2-fsp-memory.md#042-fsp-emem-pointer-writes-are-dropped), [boot window](../experiments/04_hs-sec2-fsp-memory.md#045-boot-window-icd-route-is-blocked) | [Register access](../tools/register-access/), [Direct probe](../tools/direct-probe/) |
@@ -502,17 +531,20 @@ The error-code taxonomy is in
 ## Limits and open questions
 
 - Values are stock on GB202 unless marked otherwise. Per-card values are from
-  `41:00.0` and `c1:00.0`; per-boot values are from the sampled cold boots.
+  `41:00.0` and `c1:00.0`; per-boot values are from the sampled cold boots. The
+  PRO 6000 values are measured on one card and one power-on.
 - The FEAT block is not documented in the public headers. The low byte matches
   the Falcon v4 PLM layout; the field names above it are analogy, not a
   FEAT-specific definition.
-- The readout→rate mapping is not proven. `FMLA32 = 3` yet the measured penalty
-  is about 2×, not the public enum's 1/8; INT8 is full rate with `IMLA1/2/4 = 3`.
-  The all-zero unlock target comes from A100 and data-centre Ampere, not a
-  Blackwell measurement.
-- No full-rate GB202 (RTX PRO 6000) register dump is public or local. The
-  full-rate encoding and the `SS0`/`SS1` override payload format remain inferred.
+- The zero endpoint of the readout→rate mapping is measured on the PRO 6000:
+  all-zero selectors with all-zero fuses and full rate. The nonzero values are
+  still unproven: `FMLA32 = 3` yet the measured penalty is about 2×, not the
+  public enum's 1/8; INT8 is full rate with `IMLA1/2/4 = 3`.
+- The full-rate encoding is measured on a PRO 6000: all-zero selectors and
+  all-zero arithmetic speed fuses, with the same PL3-only write gate. The
+  `SS0`/`SS1` override payload format remains inferred; the PRO snapshot is one
+  power-on, and the words move across cold boots.
 - Open: whether `0x823800` is an alias or a second PLM; the exact meaning of
-  `0x8238b0 = 0x12800541`; the real PMU BAR0 base; the 16-byte constant at
-  `0x8f0ab0`; the 128-dword CMS2 table; whether the SEC2 DMEM is larger than
-  8 KB or masked.
+  `0x8238b0` (`0x12800541` on the 5090, `0x1c5f331f` on the PRO 6000); the real
+  PMU BAR0 base; the 16-byte constant at `0x8f0ab0`; the 128-dword CMS2 table;
+  whether the SEC2 DMEM is larger than 8 KB or masked.

@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: GPL-2.0-only
 """Launch hash-pinned SM120 cubin MMA probes through the CUDA Driver API.
 
-SM120 (RTX 5090) adaptation of the 4090 issue-rate runner. Adds a BF16->FP32 mode and selects the target GPU by
+SM120 (RTX 5090) adaptation of the 4090 issue-rate runner. Adds BF16->FP32 and
+FP16->FP16 modes and selects the target GPU by
 UUID (the host has two 5090s). Checks every output cell against an all-ones
 reference.
 """
@@ -19,10 +20,12 @@ THREADS = 256
 WARPS = BLOCKS * THREADS // 32
 CHAINS = 8
 MODES = (
-    ("f16_f32", "bench_f16_f32", 16, False),
-    ("bf16_f32", "bench_bf16_f32", 16, False),
-    ("tf32", "bench_tf32", 8, False),
-    ("u4_s32", "bench_u4", 64, True),
+    # label, kernel, k, integer sink, expected-cell divisor
+    ("f16_f32", "bench_f16_f32", 16, False, 1),
+    ("f16_f16", "bench_f16_f16", 16, False, 256),
+    ("bf16_f32", "bench_bf16_f32", 16, False, 1),
+    ("tf32", "bench_tf32", 8, False, 1),
+    ("u4_s32", "bench_u4", 64, True, 1),
 )
 
 
@@ -50,6 +53,8 @@ def main():
     parser.add_argument("--expect-power-limit", type=float, required=True)
     parser.add_argument("--iters", type=int, default=20000)
     parser.add_argument("--reps", type=int, default=3)
+    parser.add_argument("--f16-f16", action="store_true",
+                        help="include the FP16-accumulate control; validate it at 2000 iterations")
     parser.add_argument("--bdf", default=None,
                         help="PCI BDF for the register poke, e.g. 0000:41:00.0")
     parser.add_argument("--reg-offset", type=lambda v: int(v, 0), default=None,
@@ -134,7 +139,8 @@ def main():
     started = time.time()
     report = {"gpu": gpu, "cubin_sha256": args.sha256, "iters": args.iters,
               "reps": args.reps, "blocks": BLOCKS, "threads": THREADS,
-              "warps": WARPS, "chains": CHAINS, "modes": {}, "reg": reg,
+              "warps": WARPS, "chains": CHAINS, "f16_f16": args.f16_f16,
+              "modes": {}, "reg": reg,
               "telemetry_before": telemetry(args.expect_uuid)}
     check(cuInit(0), "cuInit")
     if reglog:
@@ -156,7 +162,8 @@ def main():
         check(cuMemAlloc(C.byref(device_mem), cells * 4), "cuMemAlloc")
         if reglog:
             reglog("after cuMemAlloc")
-        for label, name, k, integer in MODES:
+        modes = [m for m in MODES if args.f16_f16 or m[0] != "f16_f16"]
+        for label, name, k, integer, divisor in modes:
             fn = C.c_void_p()
             check(cuModuleGetFunction(C.byref(fn), module, name.encode()), "cuModuleGetFunction " + name)
             iters = C.c_ulonglong(args.iters)
@@ -200,7 +207,7 @@ def main():
                 host = (C.c_float * cells)()
             check(cuMemcpyDtoH(C.cast(host, C.c_void_p), device_mem.value, cells * 4),
                   "cuMemcpyDtoH " + name)
-            expected = 4 * CHAINS * args.iters * k
+            expected = (4 * CHAINS * args.iters * k) // divisor
             mismatches = sum(1 for value in host if value != expected)
             assert mismatches == 0, (name, mismatches, expected, host[0], host[-1])
             ops = WARPS * args.iters * CHAINS * (16 * 8 * k * 2)

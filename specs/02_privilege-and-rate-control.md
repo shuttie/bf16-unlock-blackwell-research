@@ -4,8 +4,9 @@
 
 - **Scope.** The selector that sets tensor throughput, the privilege mask that
   protects it, and the measurements behind both.
-- **Bench.** RTX 5090 (GB202, `10de:2b85`), driver and GSP-RM 595.91.07, two
-  cards; external measurements say so in the table.
+- **Bench.** Two RTX 5090s (GB202, `10de:2b85`), driver and GSP-RM 595.91.07,
+  plus one RTX PRO 6000 Blackwell reference (same GB202 die, `10de:2bb1`,
+  615.71.09); external measurements say so in the table.
 - **Evidence.** Measured claims link to the experiment that established them.
   Claims from public headers or carried over from Ada/Ampere say so in the
   sentence.
@@ -23,8 +24,9 @@
   before GSP-RM starts.
 - `SM_ISSUE_RATE_MODIFIER` is writable but reasserted and inert. The host driver
   is telemetry, not a lever.
-- No full-rate Blackwell dump exists; the target encoding is inferred from
-  A100, consumer Ampere, and Ada.
+- The full-rate encoding is measured: a PRO 6000 reads `FEAT_READOUT_1 = 0`
+  with every arithmetic speed fuse at 0.
+- The PRO 6000's FEAT bank uses the same PL3-only write gate as the 5090.
 
 **In this spec.**
 
@@ -38,7 +40,8 @@
   - [Selector encoding](#selector-encoding)
 - [The RM getter and the host view](#the-rm-getter-and-the-host-view): what the
   driver reports.
-- [Cross-part comparison](#cross-part-comparison): A100, Ampere, Ada, GB202.
+- [Cross-part comparison](#cross-part-comparison): A100, Ampere, Ada, GB202,
+  PRO 6000.
 - [What is proven, what is inferred](#what-is-proven-what-is-inferred)
 - [What would count as an unlock](#what-would-count-as-an-unlock)
 - [Evidence map](#evidence-map)
@@ -47,7 +50,7 @@
 
 The RTX 5090 and the RTX PRO 6000 use the same GB202 die. The 5090 runs the
 FP32-accumulate tensor path at about half the FP16-accumulate rate; the PRO 6000
-runs both at the same rate, per the vendor whitepaper. The limit is a
+runs both at the same rate, measured here. The limit is a
 fuse-programmed speed selector, not a missing execution unit.
 
 | Case | Result | Provenance |
@@ -56,12 +59,15 @@ fuse-programmed speed selector, not a missing execution unit.
 | FP16 → FP32 accumulate | 224.3 TF/s | same probe |
 | BF16 → FP32 accumulate | 222.8 TF/s | same probe |
 | BF16 → FP32, two local cards | 226.6 / 229.6 TF/s | this machine, driver 595.91.07 |
-| RTX PRO 6000, same GB202 die | 503.8 / 503.8 TF/s | vendor whitepaper, not measured here |
+| RTX PRO 6000, BF16 → FP32 | 518.0 TF/s | this machine, 615.71.09; whitepaper 503.8 |
+| RTX PRO 6000, FP16 → FP16 | 515.0 TF/s | same run |
 | BF16 cuBLAS GEMM, 8192³ | 234.8 TF/s | 5090 D, a different SKU |
 
-The local probe has no FP16-accumulate mode, so the ~2× ratio is inferred from
-the external full-rate number and the local FP32-accumulate baseline. The PRO
-6000 row is vendor data; no PRO 6000 was available for a register dump.
+The PRO 6000 has the full-rate path: its BF16 → FP32 and FP16 → FP16 issue
+rates agree within 0.4%, while the 5090's BF16 → FP32 rate is half its external
+FP16 → FP16 number. The 5090 has no local FP16-accumulate measurement, so its
+full-rate ratio rests on the ai.rs number; the PRO row is measured. The PRO also
+reads `FEAT_READOUT_1 = 0` and every arithmetic speed fuse at 0.
 
 - **What the cap affects.** Compute-bound FP16/BF16 work that uses FP32
   accumulation: prefill, long-context inference, diffusion, LoRA, and training.
@@ -135,17 +141,22 @@ but it does not write the override.
 
 ### Fuses
 
-| Register | Offset | GB202/GB203M |
-|---|---|---:|
-| `FUSE_SS_DP` | `0x00820224` | 0 |
-| `FUSE_SS_FFMA` | `0x0082059c` | 0 |
-| `FUSE_SS_FMLA16` | `0x008207d4` | 0 |
-| `FUSE_SS_FMLA32` | `0x008207d8` | 3 |
-| `FUSE_SS_IMLA0` | `0x008207dc` | 0 |
-| `FUSE_SS_IMLA1` | `0x008207e0` | 3 |
-| `FUSE_SS_IMLA2` | `0x008207e4` | 3 |
-| `FUSE_SS_IMLA3` | `0x008207e8` | 0 |
-| `FUSE_SS_IMLA4` | `0x008207ec` | 3 |
+| Register | Offset | GB202/GB203M | PRO 6000 |
+|---|---|---:|---:|
+| `FUSE_SS_DP` | `0x00820224` | 0 | 0 |
+| `FUSE_SS_FFMA` | `0x0082059c` | 0 | 0 |
+| `FUSE_SS_FMLA16` | `0x008207d4` | 0 | 0 |
+| `FUSE_SS_FMLA32` | `0x008207d8` | 3 | 0 |
+| `FUSE_SS_IMLA0` | `0x008207dc` | 0 | 0 |
+| `FUSE_SS_IMLA1` | `0x008207e0` | 3 | 0 |
+| `FUSE_SS_IMLA2` | `0x008207e4` | 3 | 0 |
+| `FUSE_SS_IMLA3` | `0x008207e8` | 0 | 0 |
+| `FUSE_SS_IMLA4` | `0x008207ec` | 3 | 0 |
+
+The PRO 6000 reads 0 on every arithmetic speed fuse, the same shape as the
+[A100](../experiments/08_assessment-and-cross-checks.md#085-external-cross-part-register-corpus)
+and the measured full-rate endpoint
+([the reference dump](../experiments/08_assessment-and-cross-checks.md#0810-an-rtx-pro-6000-reference-dump)).
 
 The fuse block is read-only to the host and to the GSP. The page-0 mask
 `FUSE_SS_PLM` (`0x8200fc`) reads `0xfffffbff`, which looks write-all, but it is
@@ -190,12 +201,15 @@ but are invariant within a boot and across warm reboots:
 |---|---|---|
 | `41:00.0` | `0x21240001`, `0x20240001`, `0x20260041`, `0x21265047`, `0x21265043` | `0x00000002` |
 | `c1:00.0` | `0x54226037` / `0x54224037` | `0x00026005` / `0x00024005` |
+| PRO 6000 | `0x56664061` (one boot) | `0x00075005` |
 
 Both cards [measure identically per
 clock](../experiments/08_assessment-and-cross-checks.md#083-same-boot-two-card-issue-rate-probe),
 so the differing words are binning/state, not selectors. [The FEAT bank across
 boots](../experiments/05_fmc-fsp-boot-inputs.md#0520-feat-bank-across-boots-and-flr)
-covers the per-boot state.
+covers the per-boot state. The PRO 6000's words also have every enable bit
+clear; that snapshot is one power-on
+([the reference dump](../experiments/08_assessment-and-cross-checks.md#0810-an-rtx-pro-6000-reference-dump)).
 
 `FEAT_READOUT_1` packs eight 3-bit selectors plus DP from a separate field:
 
@@ -268,12 +282,14 @@ reset or COT path.
 | Consumer Ampere | `0x00400080` | 1 | half |
 | Ada | `0x00410080` | not dumped | half |
 | GB202/GB203M | `0x00c36180` | 3 | ~half |
+| RTX PRO 6000 (measured) | `0x00000000` | 0 | full (518 TF/s) |
 
 On every generation with a public dump, the readout mirrors the fuse words, and
-zero is the full-rate encoding. A100 is the strongest reference because it is a
-full-rate part that reads all zeros. No full-rate Blackwell part has been
-dumped, so the Blackwell target is inferred by analogy from Ada/Ampere: every
-field of `FEAT_READOUT_1` should decode to 0, including DP `[30:28]`.
+zero is the full-rate encoding. The A100 and the PRO 6000 are the full-rate
+references; both read all zeros, and the PRO's every arithmetic speed fuse is
+also 0. The earlier inference from Ada/Ampere is now a measurement: every field
+of `FEAT_READOUT_1` decodes to 0, including DP `[30:28]`
+([the reference dump](../experiments/08_assessment-and-cross-checks.md#0810-an-rtx-pro-6000-reference-dump)).
 
 ## What is proven, what is inferred
 
@@ -295,12 +311,14 @@ field of `FEAT_READOUT_1` should decode to 0, including DP `[30:28]`.
   not selectors.
 - [`SM_ISSUE_RATE_MODIFIER` is writable but reasserted and
   inert](../experiments/01_software-register-writes.md#014-the-fuse-shadow-and-the-inert-modifier).
+- A PRO 6000 reads `FEAT_READOUT_1 = 0` with every arithmetic speed fuse at 0,
+  and its FP32-accumulate rate equals its FP16-accumulate rate
+  ([the reference dump](../experiments/08_assessment-and-cross-checks.md#0810-an-rtx-pro-6000-reference-dump)).
 
 **Inferred or open.**
 
-- The readout→rate mapping. `FMLA32 = 3` with a ~2× penalty is not the Ada law.
-- The full-rate encoding. A PRO 6000 `FEAT_READOUT_1`/`SS0`/`SS1`/fuse dump
-  would settle it; no such dump exists here.
+- The nonzero readout→rate mapping. The zero endpoint is measured; `FMLA32 = 3`
+  with a ~2× penalty is not the Ada law.
 - The pre-lock FEAT writer. The timing points to a GPU-side devinit, most likely
   the PMU, but the FSP/BootROM or a hardware re-latch are not excluded.
 - The per-SM selector. Only the global FEAT bank was probed; per-SM copies could
@@ -313,7 +331,8 @@ field of `FEAT_READOUT_1` should decode to 0, including DP `[30:28]`.
 ## What would count as an unlock
 
 1. The rate getter reports `fmla32 = 0`.
-2. `FEAT_READOUT_1` decodes to zero selectors on a Blackwell-correct layout.
+2. `FEAT_READOUT_1` decodes to zero selectors on the Blackwell layout the PRO
+   6000 uses.
 3. `SS0`/`SS1` read back the intended values.
 4. BF16→FP32 issue rate is about 440 TF/s, with FP16→FP16, INT8, FP8, and scalar
    controls unchanged.
@@ -335,6 +354,7 @@ Issue-rate numbers alone are not enough; Ada GEMM gains were shape-dependent.
 | Two-card rate baseline | [08.3 two-card probe](../experiments/08_assessment-and-cross-checks.md#083-same-boot-two-card-issue-rate-probe) | [issue-rate probe](../tools/issue-rate-probe/) |
 | Registry selectors | [02.3 live paths](../experiments/02_registry-and-static-audit.md#023-speed-select-keys-are-live-code-paths), [02.4 inert](../experiments/02_registry-and-static-audit.md#024-speed-select-keys-are-inert-on-hardware) | [issue-rate probe](../tools/issue-rate-probe/) |
 | Cross-part corpus, `0x82380c` | [08.5 corpus](../experiments/08_assessment-and-cross-checks.md#085-external-cross-part-register-corpus) | offline |
+| Full-rate reference | [PRO 6000 dump](../experiments/08_assessment-and-cross-checks.md#0810-an-rtx-pro-6000-reference-dump) | [direct probe](../tools/direct-probe/), [issue-rate probe](../tools/issue-rate-probe/) |
 | Getter/static-info consumers | [08.7 static pass](../experiments/08_assessment-and-cross-checks.md#087-static-pass-over-feat-and-fsp) | [GSP-RM tools](../tools/gsp-rm-tools/) |
 | FLR window and re-lock | [01.6 window](../experiments/01_software-register-writes.md#016-the-post-reset-window-closes-before-gsp-rm), [05.21 re-lock](../experiments/05_fmc-fsp-boot-inputs.md#0521-plm-re-lock-is-autonomous-devinit) | [driver harness](../tools/driver-harness/) |
 

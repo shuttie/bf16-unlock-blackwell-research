@@ -3,17 +3,22 @@
 ## At a glance
 
 - **What it does.** Read-only [BAR0](../../specs/07_memory-and-host-access.md#bar0-and-bar1)
-  register maps and streams, with no RM or GSP call.
+  register maps and streams, with no RM or GSP call. `hw_probe` covers the maps
+  and streams; `bar_dump.py` dumps the FEAT and fuse blocks through a read-only
+  mapping.
 - **Access.** The maps are read-only. `hw_probe` writes only pointer/control
   registers and restores them; a failed restore or a wrong block can wedge the
-  GSP.
+  GSP. `bar_dump.py` has no write path.
 - **Requirements.** A live card, root, the built `hw_probe`, and the
   [register access](../register-access/) client for the step scripts.
+  `bar_dump.py` needs Python 3 and read access to the BAR.
 
 **The short version.**
 
 - `hw_probe` maps the 16 MiB BAR0 window through `resource0` and reads dwords at
   explicit offsets.
+- `bar_dump.py` is the read-only path for a container where `resource0` can be
+  opened read-only but not read-write.
 - The step scripts cover [FECS](../../specs/03_register-map.md#fecs),
   [FSP](../../specs/03_register-map.md#fsp),
   [SEC2](../../specs/03_register-map.md#sec2), and
@@ -55,6 +60,7 @@ driver ioctl, no GSP RPC, no parsing layer.
 | File | What it is |
 |---|---|
 | `hw_probe.c` | The direct BAR0 reader; one static binary, libc only |
+| `bar_dump.py` | Read-only FEAT/FUSE/GR dump through a read-only BAR mapping |
 | `run_step1_2.sh` | FECS/FEAT reads, FSP EMEM, CMS2, and block maps |
 | `run_step3.sh` | FSP/SEC2 streams and the FECS PLM write/read/restore tests |
 | `run_step4_fsp_emem.sh` | FSP core EMEM pair plus wide PFSP EMEM maps |
@@ -108,6 +114,12 @@ sudo BDF=0000:41:00.0 GPU=1 OUTDIR=./runs ./run_step3.sh
 sudo BDF=0000:41:00.0 GPU=1 BDF0=0000:c1:00.0 GPU0=0 OUTDIR=./runs ./run_step4_fsp_emem.sh
 ```
 
+For a reference dump that needs no writes:
+
+```bash
+python3 bar_dump.py 0000:41:00.0 --repeats 3 --out bars.json
+```
+
 `BDF` and `GPU` select the card; `GPU` is the register-access `deviceId`, where
 `1` is `41:00.0` and `0` is `c1:00.0` on the two-card rig. `OUTDIR` defaults to
 `./runs`; each run gets a timestamped subdirectory with `run.log`, dmesg
@@ -135,7 +147,8 @@ were restored.
 ## Inputs
 
 A live card, root, and a built [`regops`](../register-access/) client. No
-firmware or dumps are needed.
+firmware or dumps are needed. `bar_dump.py` needs Python 3 and read access to the
+BAR; it does not need root when the resource file is readable.
 
 ## Outputs
 
@@ -230,6 +243,9 @@ not data.
   retrying; do not stack experiments on a card whose control status is nonzero.
 - The scripts abort on the first unhealthy control status; do not bypass that
   check.
+- `hw_probe` opens the BAR read-write; a container with a read-only sysfs mount
+  cannot run it. `bar_dump.py` opens `resource0` read-only and is the fallback
+  for a register dump.
 
 ## Related
 
