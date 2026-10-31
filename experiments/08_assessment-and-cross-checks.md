@@ -18,8 +18,8 @@
 - The A100 is a full-rate part and reads [`FEAT_READOUT_1 = 0`](../specs/03_register-map.md#readout-decode) with every
   arithmetic speed fuse at 0; consumer Ampere and Ada carry nonzero fields
   ([the cross-part corpus](#085-external-cross-part-register-corpus)).
-- A full-rate PRO 6000 reads [`FEAT_READOUT_1 = 0`](../specs/03_register-map.md#readout-decode)
-  with every arithmetic speed fuse at 0, and runs BF16 → FP32 at 518 TF/s,
+- Two full-rate PRO 6000s read [`FEAT_READOUT_1 = 0`](../specs/03_register-map.md#readout-decode)
+  with every arithmetic speed fuse at 0; one runs BF16 → FP32 at 518 TF/s,
   equal to its FP16-accumulate rate
   ([the reference dump](#0810-an-rtx-pro-6000-reference-dump)).
 - The two cards' differing [`SS0`/`SS1`](../specs/03_register-map.md#ss0-and-ss1) words do not select different rates: both
@@ -43,9 +43,9 @@
 
 **What it did not find.**
 
-- No second cold-boot sample of the PRO 6000's [`SS0`/`SS1`](../specs/03_register-map.md#ss0-and-ss1),
-  so the override payload format is still open
-  ([the reference dump](#0810-an-rtx-pro-6000-reference-dump)).
+- No same-card cold-boot series of the PRO 6000's [`SS0`/`SS1`](../specs/03_register-map.md#ss0-and-ss1),
+  so the override payload format is still open; the second card shows the words
+  differ across cards ([the reference dump](#0810-an-rtx-pro-6000-reference-dump)).
 - No reachable `SS0`/`SS1` writer from PL0 or PL2
   ([the static pass](#087-static-pass-over-feat-and-fsp)).
 - No GSP log text or severity, because the metadata ELF is missing
@@ -412,8 +412,8 @@ Fuse values and the full-rate reference:
     observed that the words do not move; this corpus explains why.
 - **Open question:** the override payload format still needs a PL3 write or an
   authoritative header. The PRO 6000 reference settles the readout and fuse
-  questions ([the reference dump](#0810-an-rtx-pro-6000-reference-dump)); its
-  `SS0`/`SS1` show bit 3 clear on one boot, so they do not carry a live override
+  questions ([the reference dump](#0810-an-rtx-pro-6000-reference-dump)); the
+  two cards' `SS0`/`SS1` show bit 3 clear, so they do not carry a live override
   there.
 
 ## 08.6 GSP log decoding without the metadata ELF
@@ -778,13 +778,14 @@ does its FP32-accumulate rate match its FP16-accumulate rate?
 **Method.**
 
 - One RTX PRO 6000 Blackwell Workstation Edition (GB202, `10de:2bb1`, 96 GB,
-  driver and GSP-RM 615.71.09).
+  driver and GSP-RM 615.71.09), and a second card with a different serial,
+  driver 595.104.02, and a 600 W limit.
 - Read the FEAT bank `0x823800`–`0x8238ff`, the fuse block
-  `0x820000`–`0x820fff`, and `0x504204` three times through a read-only BAR0
-  mapping. No writes.
-- Ran [the issue-rate probe](../tools/issue-rate-probe/) at 20000 iterations and
-  3 reps, then with its FP16-accumulate mode at 2000 iterations and 5 reps.
-  Every output cell was checked.
+  `0x820000`–`0x820fff`, and `0x504204` three times on each card through a
+  read-only BAR0 mapping. No writes.
+- Ran [the issue-rate probe](../tools/issue-rate-probe/) on card A at 20000
+  iterations and 3 reps, then with its FP16-accumulate mode at 2000 iterations
+  and 5 reps. Every output cell was checked. The probe was not rerun on card B.
 - The FP16-accumulate kernel uses 1/16 inputs so the half accumulator stays
   exact; the 20000-iteration run saturates at 128, so the validated control uses
   2000 iterations.
@@ -797,9 +798,9 @@ python3 tools/issue-rate-probe/tensor_modes_driver_runner.py tensor_modes_issue_
   --sha256 $HASH --expect-uuid $UUID --expect-power-limit 500 --f16-f16 --iters 2000 --reps 5
 ```
 
-**Observed data.** The FEAT bank read the same values three times:
+**Observed data.** On card A, the FEAT bank read the same values three times:
 
-| Offset | Name | PRO 6000 | 5090 |
+| Offset | Name | Card A | 5090 |
 |---|---:|---:|---:|
 | `0x00823800` | `FEAT_OVR_ECC_PLM` | `0xfffffb8f` | `0xfffffb8f` |
 | `0x00823804` | `FEAT_OVR_PLM` | `0xfffffb8f` | `0xfffffb8f` |
@@ -814,12 +815,12 @@ python3 tools/issue-rate-probe/tensor_modes_driver_runner.py tensor_modes_issue_
 | `0x008238b0` | ID/version | `0x1c5f331f` | `0x12800541` |
 
 The arithmetic speed fuses at `0x8207d4`–`0x8207ec` all read 0, including
-`FUSE_SS_FMLA32`. `FUSE_SS_PLM` (`0x8200fc`) reads `0xfffffbff`, the same as the
-5090.
+[`FUSE_SS_FMLA32`](../specs/03_register-map.md#fuse-and-otp). `FUSE_SS_PLM`
+(`0x8200fc`) reads `0xfffffbff`, the same as the 5090.
 
 Issue rate, every cell validated:
 
-| Mode | PRO 6000 | 5090 |
+| Mode | Card A | 5090 |
 |---|---:|---:|
 | BF16 → FP32 | 518.0 TF/s | 227.1 TF/s |
 | FP16 → FP32 | 520.7 TF/s | 224.3 TF/s |
@@ -827,30 +828,47 @@ Issue rate, every cell validated:
 | TF32 → FP32 | 259.1 TF/s | 113.6 TF/s |
 | U4 → S32 | 674.3 TOPS | 596.5 TOPS |
 
-The same-card control is the decisive line: on the PRO 6000 the FP16 → FP16 and
+A second card (driver 595.104.02, 600 W) read the same rate-path words and
+different runtime and per-card words:
+
+| Register | Card A | Card B |
+|---|---:|---:|
+| `FEAT_READOUT_1` | `0x00000000` | `0x00000000` |
+| `FUSE_SS_FMLA32` | 0 | 0 |
+| `FEAT_OVR_PLM` | `0xfffffb8f` | `0xfffffb8f` |
+| `FEAT_OVR_QUADRO` | `0x01900888` | `0x00900888` |
+| `FEAT_OVR_SM_SS0` | `0x56664061` | `0x00544047` |
+| `FEAT_OVR_SM_SS1` | `0x00075005` | `0x00000001` |
+| `0x8238b0` ID | `0x1c5f331f` | `0x0db4b1c3` |
+
+The same-card control is the decisive line: on card A the FP16 → FP16 and
 FP16 → FP32 rates agree within 0.4%; on the 5090 the external FP16 → FP16 number
 is 1.97× its FP16 → FP32 number.
 
 **Result.**
 
-- **Answer:** the PRO 6000 reads `FEAT_READOUT_1 = 0x00000000` with every
-  arithmetic speed fuse at 0, and its FP32-accumulate rate equals its
-  FP16-accumulate rate. The all-zero encoding is measured on Blackwell.
+- **Answer:** both PRO 6000s read
+  [`FEAT_READOUT_1 = 0x00000000`](../specs/03_register-map.md#readout-decode) with
+  every arithmetic speed fuse at 0, and one card's FP32-accumulate rate equals
+  its FP16-accumulate rate. The all-zero encoding is measured on Blackwell.
 - **What we learned:**
   - The full-rate target is the all-zero selector encoding. The A100 inference
-    holds for GB202.
+    holds for GB202 on two cards.
   - The PRO 6000's [`FEAT_OVR_PLM`](../specs/03_register-map.md#write-gate) is
     `0xfffffb8f`, the same PL3-only gate as the 5090. The full rate comes from
     the fuses; the bank is not left open on a full-rate part.
-  - The FP32-accumulate rate is 518 TF/s BF16 and 520.7 TF/s FP16, within 3% of
-    the vendor whitepaper and ~2.3× the 5090. The same-card FP16-accumulate
-    control shows the cap is absent.
+  - The second card ran 595.104.02, not 615.71.09, and read the same rate-path
+    words. The full-rate values are not a driver artifact.
+  - On card A the FP32-accumulate rate is 518 TF/s BF16 and 520.7 TF/s FP16,
+    within 3% of the vendor whitepaper and ~2.3× the 5090. The same-card
+    FP16-accumulate control shows the cap is absent.
   - The PRO's `0x823808`, `0x823810`, `0x823814`, `0x82382c`, and `0x8238b0`
     differ from the 5090. They track ECC and professional features, not the rate
-    selector.
-  - The `SS0`/`SS1` snapshot is `0x56664061` / `0x00075005` on one power-on, with
-    every nibble's bit 3 clear. The words are runtime state; one boot does not
-    settle the override payload format.
+    selector; `0x823808` and `0x8238b0` also differ between the two PRO cards.
+  - The two cards' [`SS0`/`SS1`](../specs/03_register-map.md#ss0-and-ss1) words
+    differ (`0x56664061`/`0x00075005` and `0x00544047`/`0x00000001`), with every
+    nibble's bit 3 clear on both. The words are runtime state; a same-card
+    cold-boot series is still unsampled.
 - **Related:**
   - [The external cross-part corpus](#085-external-cross-part-register-corpus)
     supplies the A100 reference and the readout decode.
@@ -858,6 +876,6 @@ is 1.97× its FP16 → FP32 number.
     5090 baseline.
   - [The register map](../specs/03_register-map.md#feat-bank) carries the full
     bank and the cross-part tables.
-- **Open question:** a second cold boot or another PRO 6000 would show whether
-  `SS0`/`SS1` move the way the 5090's do. The override payload format still needs
-  a PL3 write or an authoritative header.
+- **Open question:** a same-card cold boot would show whether `SS0`/`SS1` move
+  the way the 5090's do; the two cards already show cross-card differences. The
+  override payload format still needs a PL3 write or an authoritative header.

@@ -193,11 +193,12 @@ files](experiments/) and [the raw log](RAW_EXPERIMENT_LOG.md).
 ## Where it stands
 
 The open leads, ranked by the decision each one buys, are in [Open
-leads](IDEAS.md). The short version: the FEAT and selector target is validated
-([the reference
+leads](IDEAS.md). The short version: the FEAT readout and fuse target is
+validated ([the reference
 dump](experiments/08_assessment-and-cross-checks.md#0810-an-rtx-pro-6000-reference-dump));
-next are the vBIOS app `0x23` tail and the suspend/resume saved state, then the
-boot-input race. The parser and per-SM probes follow.
+the `SS0`/`SS1` override format is still open. Next are the vBIOS app `0x23`
+tail and the suspend/resume saved state, then the boot-input race. The parser
+and per-SM probes follow.
 
 The [RISC-V debug
 engine](experiments/04_hs-sec2-fsp-memory.md#044-priscv-icd-is-a-live-debug-port)
@@ -289,8 +290,8 @@ The text is CC BY 4.0. Tool source is MIT, except `tools/issue-rate-probe/` and
 
 The PRO 6000 reference dump is in [the
 assessment](experiments/08_assessment-and-cross-checks.md#0810-an-rtx-pro-6000-reference-dump).
-A second card or a cold-boot sample of its `SS0`/`SS1` words would still help
-with the boot variance.
+A cold-boot sample from one card would still help with the boot variance; a
+second card is already in the dump.
 
 Corrections are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md). Point me at an
 experiment record or a command that reproduces the problem.

@@ -17,9 +17,11 @@
   main firmware on the GPU's RISC-V coprocessor, PL2) writes drop, the bank's
   write mask admits PL3 (boot firmware) only, and the pre-lock writer runs
   before the host.
-- One measurement can invalidate the plan: a full-rate GB202 readout. Two leads
-  could reach a primitive cheaply: the SR (suspend/resume) saved state and the
-  boot-input race.
+- The full-rate readout is measured: two RTX PRO 6000s read
+  `FEAT_READOUT_1 = 0` with every arithmetic speed fuse at 0. The remaining
+  target question is the `SS0`/`SS1` override payload. Two leads could reach a
+  primitive cheaply: the SR (suspend/resume) saved state and the boot-input
+  race.
 - The rest are parser and address probes around the FMC (first-stage mutable
   GPU firmware), the FSP (security processor), and the per-SM register space.
 
@@ -27,7 +29,7 @@
 
 | ID | Lead | What it tests | Cost | Decision value |
 |---|---|---|---|---|
-| C04 | [Validate the target](#validate-the-target) | Is the FEAT and selector target real? | free, read-only | Kills or confirms the plan |
+| C04 | [Override payload](#override-payload-format) | Does the SS0/SS1 override set full rate? | 1 PRO cold-boot series | Settles the write target |
 | C03 | [vBIOS app 0x23](#vbios-app-0x23) | Is there a host-editable pre-lock template? | 1 day + 1 boot | Only direct-unlock candidate |
 | C01 | [SR state integrity](#sr-state-integrity) | Is the saved state malleable? | 1 day | PL2 code execution |
 | C20 | [Boot-input race](#boot-input-race) | Is there a hash-to-use window? | 1–2 days | PL2 or PL3 code execution |
@@ -46,24 +48,29 @@
 | C17 | [Ada payload from PL2](#ada-payload-from-pl2) | Does the exact payload take a different gate? | minutes | Completes the record |
 | C18 | [vBIOS ucode corpus](#vbios-ucode-corpus) | Can the FECS/GPCCS consumer be decoded? | weeks | Answers the rate semantics |
 
-## Validate the target
+## Override payload format
 
-**Where it comes from.** The two cards measure the same per-clock rate with
-different `SS0` and `SS1` values (the two selector override words), so the
-varying bits are not the selector ([the two-card
-probe](experiments/08_assessment-and-cross-checks.md#083-same-boot-two-card-issue-rate-probe)).
-No full-rate GB202 has been dumped, and `FMLA32 = 3` buys about 2×, not the Ada
-enum's 1/8 ([the rate getter](experiments/07_plaintext-corpus.md#076-the-rate-getter-has-no-hidden-setter)).
-The target is an inference.
+**Where it comes from.** The full-rate readout and fuse target is measured on
+two RTX PRO 6000s: `FEAT_READOUT_1 = 0`, every arithmetic speed fuse at 0, and
+518 TF/s BF16 with the FP16-accumulate rate equal ([the reference
+dump](experiments/08_assessment-and-cross-checks.md#0810-an-rtx-pro-6000-reference-dump)).
+Both cards also have every `SS0`/`SS1` enable bit clear, so the full rate comes
+from the fuses, not a live override. The override payload format is the
+remaining target question. The two cards differ in the runtime words, but a
+same-card cold-boot series is unsampled.
 
-**Try.** Add an FP16-accumulate mode to [the issue-rate
-probe](tools/issue-rate-probe/). Log per-clock rate against the full FEAT bank
-over at least 10 cold boots. Dump `0x823800`–`0x8238b0`, the fuse block, and
-`0x823818` on a bare-metal RTX PRO 6000.
+**Try.** Run the existing FP16-accumulate mode on the 5090 to measure its cap
+ratio locally ([the issue-rate probe](tools/issue-rate-probe/)). Get a same-card
+cold-boot series on a PRO 6000 and compare `SS0`/`SS1` movement with the 5090's
+([the FEAT-bank boot
+test](experiments/05_fmc-fsp-boot-inputs.md#0520-feat-bank-across-boots-and-flr)).
+An authoritative header or a PL3 write is the only way to settle the payload's
+efficacy.
 
-**Decision.** A Pro 6000 with `FMLA32 = 0`, `READOUT_1 = 0`, and `SS0` enable
-bits confirms the target. A Pro 6000 with `FMLA32 = 3` and full rate re-plans
-the work.
+**Decision.** If the PRO's `SS0`/`SS1` move across cold boots like the 5090's,
+the words are runtime state and the override path stays unvalidated. If a PRO
+boot shows an enable bit, that is the payload. A PL3 write remains the decisive
+test.
 
 ## vBIOS app 0x23
 
@@ -153,7 +160,10 @@ and FECS PL2 writes drop under masks that admit L2 ([the FECS
 probe](experiments/03_fecs-and-gr-context.md#031-live-fecs-fsp-and-sec2-probes)).
 The FEAT drop is consistent with the L3 mask, but it has never been tested from
 a level the mask admits ([the PLM
-spec](specs/02_privilege-and-rate-control.md#privilege-levels-and-the-plm)).
+spec](specs/02_privilege-and-rate-control.md#privilege-levels-and-the-plm)). The
+PRO 6000 has the same PL3-only gate at full rate, so the gate is not the cap; the
+fuses are ([the reference
+dump](experiments/08_assessment-and-cross-checks.md#0810-an-rtx-pro-6000-reference-dump)).
 
 **Try.** Read and write the fuse security words `0x82038c`, `0x8203f0`,
 `0x8200d0`–`0x8200fc`, and `0x820040`; read the FEAT words across the FLR
@@ -290,7 +300,10 @@ closes the framing.
 
 **Where it comes from.** Only bit 16 of `READOUT_0` and bits 5 and 10 of
 `READOUT_2` are decoded, and A100 reads a completely different `READOUT_0`
-([the readout decode](specs/03_register-map.md#readout-decode)).
+([the readout decode](specs/03_register-map.md#readout-decode)). The PRO 6000
+adds `READOUT_0 = 0x00000300` and `READOUT_2 = 1`, but the bits remain
+undecoded ([the reference
+dump](experiments/08_assessment-and-cross-checks.md#0810-an-rtx-pro-6000-reference-dump)).
 
 **Try.** Decompile the `0x3814` and `0x3828` readers from the plaintext GSP-RM
 and name every bit ([the GSP-RM tools](tools/gsp-rm-tools/)).
@@ -317,8 +330,9 @@ register is not.
 **Where it comes from.** The PL2 test wrote `SS0 = 0`; it never wrote the exact
 payload `0x88888888` and `0x8` ([the FUSE and rate
 test](experiments/01_software-register-writes.md#014-the-fuse-shadow-and-the-inert-modifier)).
-The mask predicts a drop, but the enable bits could take a different gate
-([`SS0` and `SS1`](specs/03_register-map.md#ss0-and-ss1)).
+The mask predicts a drop. The two PRO 6000s run full rate with every enable bit
+clear, so the override may be unused on Blackwell ([the reference
+dump](experiments/08_assessment-and-cross-checks.md#0810-an-rtx-pro-6000-reference-dump)).
 
 **Try.** Write `SS0 = 0x88888888` and `SS1 = 0x8` from the GSP, read back, and
 restore.
@@ -342,6 +356,10 @@ command sets it. High effort, no hardware.
 
 ## Closed, do not retry
 
+- The all-zero full-rate target. Two PRO 6000s read `FEAT_READOUT_1 = 0` with
+  every arithmetic speed fuse at 0 and run BF16 at 518 TF/s; do not re-plan
+  around the A100 inference ([the reference
+  dump](experiments/08_assessment-and-cross-checks.md#0810-an-rtx-pro-6000-reference-dump)).
 - More 16! MD5-IV key passes. The family is exhausted under ECB, CBC-zero and
   header-IV, and CTR starts 0 and 1 ([the key
   search](experiments/07_plaintext-corpus.md#0710-the-fmc-key-search-comes-back-negative)).

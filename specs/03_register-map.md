@@ -137,8 +137,8 @@ survey reproduced in [the external
 corpus](../experiments/08_assessment-and-cross-checks.md#085-external-cross-part-register-corpus);
 the PRO 6000 column is measured ([the reference
 dump](../experiments/08_assessment-and-cross-checks.md#0810-an-rtx-pro-6000-reference-dump)).
-A100 is a full-rate part and reads zero on every arithmetic speed fuse; the PRO
-6000 reads the same zeros on GB202. Consumer Ampere reads `1` on
+A100 is a full-rate part and reads zero on every arithmetic speed fuse; both PRO
+6000s read the same zeros on GB202. Consumer Ampere reads `1` on
 `FMLA32`/`IMLA4`; Ada reads `1` on `FMLA32`/`IMLA4` and `IMLA2`. The consumer
 GB202 reads `3` on `FMLA32`/`IMLA1`/`IMLA2`/`IMLA4`. The Blackwell code→rate law
 is not proven for the nonzero values; see [privilege and rate
@@ -172,7 +172,8 @@ corpus](../experiments/08_assessment-and-cross-checks.md#085-external-cross-part
 The 5090 values above are the stock consumer map. The measured PRO 6000 reads
 the same `0x823800`/`0x823804` PLMs (`0xfffffb8f`) and `0x82380c`
 (`0x00888888`); the words that differ are in [the cross-part
-table](#cross-part-feat-values). Its ID at `0x8238b0` is `0x1c5f331f`
+table](#cross-part-feat-values). Its ID at `0x8238b0` is per-card:
+`0x1c5f331f` on one card and `0x0db4b1c3` on the second
 ([the reference
 dump](../experiments/08_assessment-and-cross-checks.md#0810-an-rtx-pro-6000-reference-dump)).
 
@@ -231,7 +232,8 @@ The two words are runtime state, not per-part fuses:
 |---|---|---|
 | `41:00.0` | `0x21240001`, `0x20240001`, `0x20260041`, `0x21265047`, `0x21265043` | `0x00000002`, `0x00000006` |
 | `c1:00.0` | `0x54226037`, `0x54224037`, `0x54225037`, `0x54226037` | `0x00026005`, `0x00024005` |
-| PRO 6000 | `0x56664061` (one boot) | `0x00075005` |
+| PRO 6000 card A | `0x56664061` (one boot) | `0x00075005` |
+| PRO 6000 card B | `0x00544047` (one boot) | `0x00000001` |
 
 Every nibble has bit 3 clear on the 5090 samples and on the PRO 6000 snapshot, so
 the override-enable fields are off and the fused selectors are in force. The
@@ -241,8 +243,8 @@ the FMC runs, as [the FEAT-bank boot
 test](../experiments/05_fmc-fsp-boot-inputs.md#0517-feat-bank-final-before-the-fmc)
 and [the cold-boot/FLR
 comparison](../experiments/05_fmc-fsp-boot-inputs.md#0520-feat-bank-across-boots-and-flr)
-show. The PRO 6000 snapshot is one power-on and does not show the cold-boot
-spread ([the reference
+show. The two PRO 6000 snapshots are one power-on each; the words differ across
+cards, so a same-card cold-boot spread is still unsampled ([the reference
 dump](../experiments/08_assessment-and-cross-checks.md#0810-an-rtx-pro-6000-reference-dump)).
 
 An FLR leaves `SS0`/`SS1`, `0x823808`, and `READOUT_1` unchanged, but resets the
@@ -281,11 +283,12 @@ test](../experiments/05_fmc-fsp-boot-inputs.md#0521-plm-re-lock-is-autonomous-de
 The GB202, Consumer GA10x, A100, and RTX 3090 Ti values are from the public
 cross-part survey reproduced in [the external
 corpus](../experiments/08_assessment-and-cross-checks.md#085-external-cross-part-register-corpus);
-the PRO 6000 column is measured ([the reference
-dump](../experiments/08_assessment-and-cross-checks.md#0810-an-rtx-pro-6000-reference-dump)).
-The A100 SXM4 40 GB is the only `0x823800` outlier at `0x0000abcf`. The A100 and
-the PRO 6000 are the full-rate references: `FEAT_READOUT_1 = 0` with every
-arithmetic fuse at `0`.
+the PRO 6000 column is measured on card A ([the reference
+dump](../experiments/08_assessment-and-cross-checks.md#0810-an-rtx-pro-6000-reference-dump));
+a second card reads the same `READOUT_1` and PLM/fuse values and differs in its
+runtime and per-card words. The A100 SXM4 40 GB is the only `0x823800` outlier
+at `0x0000abcf`. The A100 and the two PRO 6000s are the full-rate references:
+`FEAT_READOUT_1 = 0` with every arithmetic fuse at `0`.
 
 ## FECS
 
@@ -532,19 +535,19 @@ The error-code taxonomy is in
 
 - Values are stock on GB202 unless marked otherwise. Per-card values are from
   `41:00.0` and `c1:00.0`; per-boot values are from the sampled cold boots. The
-  PRO 6000 values are measured on one card and one power-on.
+  PRO 6000 values are measured on two cards, one power-on each.
 - The FEAT block is not documented in the public headers. The low byte matches
   the Falcon v4 PLM layout; the field names above it are analogy, not a
   FEAT-specific definition.
-- The zero endpoint of the readout→rate mapping is measured on the PRO 6000:
+- The zero endpoint of the readout→rate mapping is measured on two PRO 6000s:
   all-zero selectors with all-zero fuses and full rate. The nonzero values are
   still unproven: `FMLA32 = 3` yet the measured penalty is about 2×, not the
   public enum's 1/8; INT8 is full rate with `IMLA1/2/4 = 3`.
-- The full-rate encoding is measured on a PRO 6000: all-zero selectors and
+- The full-rate encoding is measured on two PRO 6000s: all-zero selectors and
   all-zero arithmetic speed fuses, with the same PL3-only write gate. The
-  `SS0`/`SS1` override payload format remains inferred; the PRO snapshot is one
-  power-on, and the words move across cold boots.
+  `SS0`/`SS1` override payload format remains inferred; the PRO snapshots are one
+  power-on per card, and the words differ across cards.
 - Open: whether `0x823800` is an alias or a second PLM; the exact meaning of
-  `0x8238b0` (`0x12800541` on the 5090, `0x1c5f331f` on the PRO 6000); the real
-  PMU BAR0 base; the 16-byte constant at `0x8f0ab0`; the 128-dword CMS2 table;
-  whether the SEC2 DMEM is larger than 8 KB or masked.
+  `0x8238b0` (`0x12800541` on the 5090, `0x1c5f331f` and `0x0db4b1c3` on two PRO
+  6000s); the real PMU BAR0 base; the 16-byte constant at `0x8f0ab0`; the
+  128-dword CMS2 table; whether the SEC2 DMEM is larger than 8 KB or masked.

@@ -153,7 +153,7 @@ but it does not write the override.
 | `FUSE_SS_IMLA3` | `0x008207e8` | 0 | 0 |
 | `FUSE_SS_IMLA4` | `0x008207ec` | 3 | 0 |
 
-The PRO 6000 reads 0 on every arithmetic speed fuse, the same shape as the
+Both PRO 6000s read 0 on every arithmetic speed fuse, the same shape as the
 [A100](../experiments/08_assessment-and-cross-checks.md#085-external-cross-part-register-corpus)
 and the measured full-rate endpoint
 ([the reference dump](../experiments/08_assessment-and-cross-checks.md#0810-an-rtx-pro-6000-reference-dump)).
@@ -201,14 +201,16 @@ but are invariant within a boot and across warm reboots:
 |---|---|---|
 | `41:00.0` | `0x21240001`, `0x20240001`, `0x20260041`, `0x21265047`, `0x21265043` | `0x00000002` |
 | `c1:00.0` | `0x54226037` / `0x54224037` | `0x00026005` / `0x00024005` |
-| PRO 6000 | `0x56664061` (one boot) | `0x00075005` |
+| PRO 6000 card A | `0x56664061` (one boot) | `0x00075005` |
+| PRO 6000 card B | `0x00544047` (one boot) | `0x00000001` |
 
 Both cards [measure identically per
 clock](../experiments/08_assessment-and-cross-checks.md#083-same-boot-two-card-issue-rate-probe),
 so the differing words are binning/state, not selectors. [The FEAT bank across
 boots](../experiments/05_fmc-fsp-boot-inputs.md#0520-feat-bank-across-boots-and-flr)
-covers the per-boot state. The PRO 6000's words also have every enable bit
-clear; that snapshot is one power-on
+covers the per-boot state. Both PRO 6000 snapshots have every enable bit clear,
+and the words differ across the two cards; a same-card cold-boot series is still
+unsampled
 ([the reference dump](../experiments/08_assessment-and-cross-checks.md#0810-an-rtx-pro-6000-reference-dump)).
 
 `FEAT_READOUT_1` packs eight 3-bit selectors plus DP from a separate field:
@@ -285,9 +287,9 @@ reset or COT path.
 | RTX PRO 6000 (measured) | `0x00000000` | 0 | full (518 TF/s) |
 
 On every generation with a public dump, the readout mirrors the fuse words, and
-zero is the full-rate encoding. The A100 and the PRO 6000 are the full-rate
-references; both read all zeros, and the PRO's every arithmetic speed fuse is
-also 0. The earlier inference from Ada/Ampere is now a measurement: every field
+zero is the full-rate encoding. The A100 and two PRO 6000s are the full-rate
+references: all three read all zeros, and both PRO cards have every arithmetic
+speed fuse at 0. The earlier inference from Ada/Ampere is now a measurement: every field
 of `FEAT_READOUT_1` decodes to 0, including DP `[30:28]`
 ([the reference dump](../experiments/08_assessment-and-cross-checks.md#0810-an-rtx-pro-6000-reference-dump)).
 
@@ -311,8 +313,8 @@ of `FEAT_READOUT_1` decodes to 0, including DP `[30:28]`
   not selectors.
 - [`SM_ISSUE_RATE_MODIFIER` is writable but reasserted and
   inert](../experiments/01_software-register-writes.md#014-the-fuse-shadow-and-the-inert-modifier).
-- A PRO 6000 reads `FEAT_READOUT_1 = 0` with every arithmetic speed fuse at 0,
-  and its FP32-accumulate rate equals its FP16-accumulate rate
+- Two PRO 6000s read `FEAT_READOUT_1 = 0` with every arithmetic speed fuse at 0,
+  and one card's FP32-accumulate rate equals its FP16-accumulate rate
   ([the reference dump](../experiments/08_assessment-and-cross-checks.md#0810-an-rtx-pro-6000-reference-dump)).
 
 **Inferred or open.**
