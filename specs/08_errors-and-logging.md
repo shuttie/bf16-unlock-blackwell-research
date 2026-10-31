@@ -159,7 +159,8 @@ probes](../experiments/03_fecs-and-gr-context.md#031-live-fecs-fsp-and-sec2-prob
 [the FSP EMEM port](../experiments/04_hs-sec2-fsp-memory.md#042-fsp-emem-pointer-writes-are-dropped),
 [the sentinel analysis](../experiments/08_assessment-and-cross-checks.md#089-sentinel-and-raw-function-analysis),
 [the PRISCV split](../experiments/04_hs-sec2-fsp-memory.md#043-priscv-block-is-split-per-master),
-and [the live ICD](../experiments/04_hs-sec2-fsp-memory.md#044-priscv-icd-is-a-live-debug-port).
+[the live ICD](../experiments/04_hs-sec2-fsp-memory.md#044-priscv-icd-is-a-live-debug-port),
+and [the debugger test](../experiments/01_software-register-writes.md#018-the-debugger-class-reads-the-bank-but-cannot-write-it).
 
 Other sentinels and data markers:
 
@@ -394,7 +395,7 @@ the ICD itself is in [GSP RISC-V and PRISCV](06_gsp-riscv-and-priscv.md).
 | `0x83d`, registry boot keys | [boot-input keys](../experiments/02_registry-and-static-audit.md#022-boot-input-keys-change-what-the-fmc-receives) |
 | FMC parser codes | [the 09 group](../experiments/09_fmc-cold-boot-parsers.md) |
 | NV status codes | [crashed GSP](../experiments/01_software-register-writes.md#011-first-register-write-hits-a-crashed-gsp), [16 MiB heap](../experiments/05_fmc-fsp-boot-inputs.md#0514-16-mib-heap-request-wedges-the-boot), [GR_CTX rejected](../experiments/01_software-register-writes.md#017-per-context-registers-need-a-caller-owned-channel) |
-| Sentinels and PRI telemetry | [live probes](../experiments/03_fecs-and-gr-context.md#031-live-fecs-fsp-and-sec2-probes), [FSP EMEM](../experiments/04_hs-sec2-fsp-memory.md#042-fsp-emem-pointer-writes-are-dropped), [sentinel analysis](../experiments/08_assessment-and-cross-checks.md#089-sentinel-and-raw-function-analysis), [PRISCV split](../experiments/04_hs-sec2-fsp-memory.md#043-priscv-block-is-split-per-master), [live ICD](../experiments/04_hs-sec2-fsp-memory.md#044-priscv-icd-is-a-live-debug-port) |
+| Sentinels and PRI telemetry | [live probes](../experiments/03_fecs-and-gr-context.md#031-live-fecs-fsp-and-sec2-probes), [FSP EMEM](../experiments/04_hs-sec2-fsp-memory.md#042-fsp-emem-pointer-writes-are-dropped), [sentinel analysis](../experiments/08_assessment-and-cross-checks.md#089-sentinel-and-raw-function-analysis), [PRISCV split](../experiments/04_hs-sec2-fsp-memory.md#043-priscv-block-is-split-per-master), [live ICD](../experiments/04_hs-sec2-fsp-memory.md#044-priscv-icd-is-a-live-debug-port), [debugger test](../experiments/01_software-register-writes.md#018-the-debugger-class-reads-the-bank-but-cannot-write-it) |
 | WPR fill `0xbad0ac00` | [closed FB route](../experiments/05_fmc-fsp-boot-inputs.md#0525-fb-route-shut) |
 | GSP log format and decoder | [decoder](../experiments/08_assessment-and-cross-checks.md#086-gsp-log-decoding-without-the-metadata-elf), [live capture](../experiments/08_assessment-and-cross-checks.md#088-live-gsp-log-capture-and-decode), [sentinel analysis](../experiments/08_assessment-and-cross-checks.md#089-sentinel-and-raw-function-analysis) |
 | Tracing facilities | [tracing audit](../experiments/08_assessment-and-cross-checks.md#084-audit-of-the-tracing-facilities) |

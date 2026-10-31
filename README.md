@@ -25,7 +25,7 @@ and [3090](https://github.com/Zagitta/gpu-unlock) cards.
 - 2× RTX 5090 (GB202, `10de:2b85`), different board vendors and VBIOS revisions.
 - Host driver and GPU firmware 595.91.07, compute capability 12.0, CUDA 13 on
   Linux, 575 W.
-- Experiments ran 2026-10-25 to 2026-10-29.
+- Experiments ran 2026-10-25 to 2026-10-31.
 - Reference run: one RTX PRO 6000 Blackwell Workstation Edition (same GB202 die,
   `10de:2bb1`), 96 GB, driver and GSP-RM 615.71.09, CUDA 13.2, 500 W,
   2026-10-31.

@@ -74,7 +74,7 @@
 | 08.8 | [Live GSP log capture and decode](#088-live-gsp-log-capture-and-decode) | 173 records per card |
 | 08.9 | [Sentinel and raw-function log analysis](#089-sentinel-and-raw-function-analysis) | 0xBADF records are PRI refusals |
 | 08.10 | [An RTX PRO 6000 reference dump](#0810-an-rtx-pro-6000-reference-dump) | All-zero selectors, full rate |
-| 08.11 | [The register route is a PL3 problem](#0811-the-register-route-is-a-pl3-problem) | Prior art needs HS code execution |
+| 08.11 | [The register route is a PL3 problem](#0811-the-register-route-is-a-pl3-problem) | Prior art needs HS execution |
 
 ## 08.1 Critical reassessment of the findings
 
@@ -957,6 +957,11 @@ Public probes and the prior-art projects show the same wall:
   Windows 621.01 modules, or in the 610/615 open source branches; the Blackwell
   dispatch resolves to a stub that returns NULL
   ([issue #12](https://github.com/JustAResearcher/gpu-unlock-ada/issues/12)).
+- A public Blackwell port reports the GSP-RM descriptor is a new v6 wire format,
+  92 bytes and 23 words, that keeps the v5 code and data word positions but
+  drops the two signature ranges and the image size
+  ([issue #12](https://github.com/JustAResearcher/gpu-unlock-ada/issues/12)).
+  The Ada-era payload tooling parses a different descriptor.
 - The Linux kernel's nova-core documentation states the boot chain directly: on
   Hopper/Blackwell the FSP is the root of trust, and "there is no SEC2
   involvement, no Booter ucode, and no FWSEC-FRTS stage"

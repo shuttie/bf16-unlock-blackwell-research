@@ -50,7 +50,7 @@
 | 01.5 | [The permission mask admits PL3 writes only](#015-the-permission-mask-admits-pl3-writes-only) | Write gate is PL3-only |
 | 01.6 | [The post-reset window closes before GSP-RM](#016-the-post-reset-window-closes-before-gsp-rm) | Window ends before GSP-RM exists |
 | 01.7 | [Per-context registers need a caller-owned channel](#017-per-context-registers-need-a-caller-owned-channel) | Context route closed at PL0 |
-| 01.8 | [The debugger class reads the bank, not writes](#018-the-debugger-class-reads-the-bank-but-cannot-write-it) | Read matches; write dropped |
+| 01.8 | [The debugger class reads but cannot write](#018-the-debugger-class-reads-the-bank-but-cannot-write-it) | Read matches; write drops |
 
 ## 01.1 First register write hits a crashed GSP
 
@@ -694,7 +694,7 @@ FUSE_SS_PLM      0xfffffbff
 The write returned the success path and the readback stayed `0x01000280`:
 
 ```text
-WRITE   0x00823808 bit 0   RM status=0  regStatus=0
+WRITE   0x00823808 bit 0   RM status=0  regStatus=0   (intended 0x01000281)
 READBACK 0x00823808        = 0x01000280   (unchanged)
 ```
 
