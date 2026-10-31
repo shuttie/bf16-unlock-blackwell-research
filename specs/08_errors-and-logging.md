@@ -3,7 +3,7 @@
 ## At a glance
 
 - **Scope.** What secure firmware and the driver return when a boot input,
-  register access, or log read fails. It covers the ten mapped boot codes, the
+  register access, or log read fails. It covers the mapped boot codes, the
   NV status codes seen, the `0xBADF` sentinel families, the GSP-RM log ring
   format, the decoder, and the host tracing facilities.
 - **Bench.** Stock RTX 5090 (GB202, `10de:2b85`), driver and GSP-RM 595.91.07,
@@ -15,10 +15,13 @@
 
 **The short version.**
 
-- Ten boot codes are mapped. Pre-auth checks (`0xd9`, `0xd6`, `0x827`, `0x82e`,
-  `0x885`) recover cleanly; authentication failures (`0x377`, `0x1db`, `0x33`)
-  leave WPR2 armed and need a reboot.
-- `0xaff` is the image-authentication failure for either boot image.
+- Seventeen boot codes are mapped. The clean pre-auth checks, such as `0xd9`,
+  `0x82e`, `0x841`, `0x885`, `0xa97`, and `0xa0f`, recover with a module reload;
+  authentication failures (`0x377`, `0x1db`, `0x33`) leave WPR2 armed and need
+  a reboot.
+- `0xaff` covers image authentication and the signature records. Its info byte
+  distinguishes a slot mismatch (`0x1`), a table mismatch (`0x2`), an undersized
+  record (`0x7`), and image authentication (`0xb`).
 - `0xBADFxxxx` reads are PRI-ringstation errors, not data. The low byte picks the
   caller or engine for the blocked-port cases.
 - GSP-RM writes per-task log rings into host-mapped sysmem. The metadata ELF is
@@ -43,9 +46,9 @@
 
 ## Boot error codes
 
-Ten codes are mapped. The channel matters: `FSP response` codes come back in the
-COT reply (Task `0x1`, command `0x14`); `Fatal GSP-FMC Error` codes come from the
-FMC/ACR path and are printed by the driver.
+Seventeen codes are mapped. The channel matters: `FSP response` codes come back
+in the COT reply (Task `0x1`, command `0x14`); `Fatal GSP-FMC Error` codes come
+from the FMC/ACR path and are printed by the driver.
 
 | Code | Channel | Trigger | Recovery | Evidence |
 |---|---|---|---|---|
@@ -53,8 +56,15 @@ FMC/ACR path and are printed by the driver.
 | `0xd9` | FSP response | COT `frtsVidmemSize != 0x100000` | clean | [FRTS size rejected](../experiments/05_fmc-fsp-boot-inputs.md#054-frts-size-rejected-by-the-fsp), [control boot](../experiments/05_fmc-fsp-boot-inputs.md#055-frts-size-control-boots-larger-refused) |
 | `0xd6` | FSP response | COT FRTS offset not 128K-aligned | clean | [misaligned base](../experiments/05_fmc-fsp-boot-inputs.md#057-misaligned-frts-base-draws-0xd6) |
 | `0x827` | FMC/ACR, partition 1 | `WprMeta.magic` wrong | clean | [magic enforced](../experiments/05_fmc-fsp-boot-inputs.md#0511-wprmeta-magic-enforced-verified-accepted) |
-| `0x82e` | FMC, partition 1 | `WprMeta.sizeOfBootloader` changed from `0x47000` | clean | [bootloader description](../experiments/05_fmc-fsp-boot-inputs.md#0523-wprmeta-bootloader-description-and-images) |
-| `0x885` | FMC, partition 1 | `WprMeta.bootloaderManifestOffset` outside the image | clean | [bootloader description](../experiments/05_fmc-fsp-boot-inputs.md#0523-wprmeta-bootloader-description-and-images) |
+| `0x828` | FMC/ACR, partition 1 | `WprMeta.revision` is not 1 | clean | [revision and manifest](../experiments/09_fmc-cold-boot-parsers.md#098-the-revision-and-manifest-offset-are-exact-checks) |
+| `0x82e` | FMC, partition 1 | `WprMeta.sizeOfBootloader` is not 4 KiB-aligned | clean | [bootloader size](../experiments/09_fmc-cold-boot-parsers.md#091-the-bootloader-size-is-a-4-kib-aligned-authentication-length) |
+| `0x836` | FMC, partition 1 | `sizeOfBootloader` is 256 MiB | clean | [bootloader size](../experiments/09_fmc-cold-boot-parsers.md#091-the-bootloader-size-is-a-4-kib-aligned-authentication-length) |
+| `0x83e` | FMC, partition 1 | `sysmemAddrOfRadix3Elf` moved | clean | [bootloader and radix3 addresses](../experiments/09_fmc-cold-boot-parsers.md#095-the-bootloader-and-radix3-addresses-are-consumed-pre-auth) |
+| `0x841` | FMC, partition 1 | `bootloaderManifestOffset` in range and not 0 | clean | [revision and manifest](../experiments/09_fmc-cold-boot-parsers.md#098-the-revision-and-manifest-offset-are-exact-checks) |
+| `0x885` | FMC, partition 1 | parameter out of range or misaligned | clean | [signature address](../experiments/09_fmc-cold-boot-parsers.md#096-the-signature-address-is-a-4-byte-aligned-pointer) |
+| `0xa97` | FMC, partition 1 | signature address aligned, header magic wrong | clean | [signature address](../experiments/09_fmc-cold-boot-parsers.md#096-the-signature-address-is-a-4-byte-aligned-pointer) |
+| `0xaaa` | FMC, partition 1 | signature record size above `0x200` | clean | [record size](../experiments/09_fmc-cold-boot-parsers.md#093-the-signature-record-size-is-a-bounded-window) |
+| `0xa0f` | FMC, partition 1 | signature mode not 1 or 2 | clean | [table and mode](../experiments/09_fmc-cold-boot-parsers.md#094-the-signature-table-and-mode-fields-are-validated) |
 | `0x377` | FSP response | COT hash authentication failure | **WPR2 left up** | [hash authenticated](../experiments/05_fmc-fsp-boot-inputs.md#0516-cot-hash-authenticated-auth-failure-wedges) |
 | `0x1db` | FSP response | COT public key not accepted (self-signed pair) | **WPR2 left up** | [key anchored](../experiments/05_fmc-fsp-boot-inputs.md#0518-cot-public-key-anchored) |
 | `0x33` | FSP response | FMC container byte changed while the COT hash is stock | **WPR2 left up** | [container tampered](../experiments/05_fmc-fsp-boot-inputs.md#0519-fmc-container-read-back-and-tampered) |
@@ -76,9 +86,12 @@ Fatal GSP-FMC Error: version=0x1, partition=0x1, error code=0x827, additional in
 Fatal GSP-FMC Error: version=0x1, partition=0x1, error code=0xaff, additional info=0xb
 ```
 
-`0xaff` is the image-authentication failure for either boot image. `0x82e` and
-`0x885` are separate pre-auth checks: the bootloader length and the manifest
-offset are consumed, while the code/data offsets and the signature size are not.
+`0xaff` covers image authentication and the signature record checks. Its
+additional-info byte distinguishes a slot mismatch (`0x1`), a table mismatch
+(`0x2`), an undersized record (`0x7`), and the image authentication itself
+(`0xb`). `0x82e` is the bootloader-size alignment check, `0x841` is the
+manifest-offset check, and `0x885` is a generic range or alignment refusal. The
+code/data offsets and the signature size field are not consumed on this path.
 See [boot chain](01_boot-chain.md) for the structures and [the bootloader
 description](../experiments/05_fmc-fsp-boot-inputs.md#0523-wprmeta-bootloader-description-and-images)
 for the field matrix.
@@ -89,7 +102,7 @@ Four failure modes have different costs:
 
 | Mode | Example | Recovery | Evidence |
 |---|---|---|---|
-| Structured refusal, clean | `0xd9`, `0xd6`, `0x827`, `0x82e`, `0x885` | one module reload | [FRTS size](../experiments/05_fmc-fsp-boot-inputs.md#054-frts-size-rejected-by-the-fsp), [magic](../experiments/05_fmc-fsp-boot-inputs.md#0511-wprmeta-magic-enforced-verified-accepted), [bootloader](../experiments/05_fmc-fsp-boot-inputs.md#0523-wprmeta-bootloader-description-and-images) |
+| Structured refusal, clean | `0xd9`, `0xd6`, `0x827`, `0x82e`, `0x828`, `0x836`, `0x83e`, `0x841`, `0x885`, `0xa97`, `0xaaa`, `0xa0f` | one module reload | [FRTS size](../experiments/05_fmc-fsp-boot-inputs.md#054-frts-size-rejected-by-the-fsp), [magic](../experiments/05_fmc-fsp-boot-inputs.md#0511-wprmeta-magic-enforced-verified-accepted), [bootloader](../experiments/05_fmc-fsp-boot-inputs.md#0523-wprmeta-bootloader-description-and-images), [the FMC parsers](../experiments/09_fmc-cold-boot-parsers.md) |
 | Structured refusal, WPR2 up | `0x377`, `0x1db`, `0x33` | one reboot | [hash](../experiments/05_fmc-fsp-boot-inputs.md#0516-cot-hash-authenticated-auth-failure-wedges), [key](../experiments/05_fmc-fsp-boot-inputs.md#0518-cot-public-key-anchored), [container](../experiments/05_fmc-fsp-boot-inputs.md#0519-fmc-container-read-back-and-tampered) |
 | Hang, no host log | bad `SRMeta` magic | one reboot; no evidence without an out-of-band console | [bad SRMeta magic](../experiments/06_sr-resume.md#062-a-bad-srmeta-magic-hangs-the-resume) |
 | Hard wedge | heap below GSP-RM's minimum | one reboot, possibly a cold power cycle | [16 MiB heap](../experiments/05_fmc-fsp-boot-inputs.md#0514-16-mib-heap-request-wedges-the-boot) |
@@ -328,7 +341,15 @@ the ICD itself is in [GSP RISC-V and PRISCV](06_gsp-riscv-and-priscv.md).
 | `0xd9` | COT FRTS size is not exactly 1 MB | fix the size; module reload |
 | `0xd6` | COT FRTS offset is not 128K-aligned | align the offset; module reload |
 | `0x827` | `WprMeta.magic` wrong | fix the magic; module reload |
-| `0x82e` / `0x885` | bootloader length / manifest offset wrong | fix the field; module reload |
+| `0x828` | `WprMeta.revision` is not 1 | set 1; module reload |
+| `0x82e` | `sizeOfBootloader` not 4 KiB-aligned | align it; module reload |
+| `0x836` | `sizeOfBootloader` at the 256 MiB limit | reduce it; module reload |
+| `0x83e` | radix3 image address moved | restore it; module reload |
+| `0x841` | `bootloaderManifestOffset` not 0 | set 0; module reload |
+| `0x885` | parameter out of range or misaligned | fix the field; module reload |
+| `0xa97` | signature header magic wrong | restore the signature section; module reload |
+| `0xaaa` | signature record size above `0x200` | restore the size; module reload |
+| `0xa0f` | signature mode not 1 or 2 | restore the mode; module reload |
 | `0x377` / `0x1db` / `0x33` | authentication or image binding failed | reboot; WPR2 is up |
 | `0xaff` + info `0xb` | boot image failed authentication | restore the stock image |
 | `0x83d` | FRTS region withheld from the FMC | restore the COT region |
@@ -341,8 +362,9 @@ the ICD itself is in [GSP RISC-V and PRISCV](06_gsp-riscv-and-priscv.md).
 
 ## Limits and open questions
 
-- Ten boot codes are mapped; the FSP/FMC error space is larger. `0xaff` carries
-  only `additional info=0xb` on this build.
+- Seventeen boot codes are mapped; the FSP/FMC error space is larger. `0xaff`
+  carries info `0x1` (slot), `0x2` (table), `0x7` (record size), and `0xb`
+  (image authentication).
 - The auth-failure ordering is measured for these fields; a TOCTOU between the
   FSP hash read and its decrypt read is not characterised.
 - Message text and severity for RM and INIT log records need the missing
@@ -363,6 +385,7 @@ the ICD itself is in [GSP RISC-V and PRISCV](06_gsp-riscv-and-priscv.md).
 |---|---|
 | FMC/FSP boot codes | [FRTS size](../experiments/05_fmc-fsp-boot-inputs.md#054-frts-size-rejected-by-the-fsp), [misaligned base](../experiments/05_fmc-fsp-boot-inputs.md#057-misaligned-frts-base-draws-0xd6), [magic](../experiments/05_fmc-fsp-boot-inputs.md#0511-wprmeta-magic-enforced-verified-accepted), [hash](../experiments/05_fmc-fsp-boot-inputs.md#0516-cot-hash-authenticated-auth-failure-wedges), [container](../experiments/05_fmc-fsp-boot-inputs.md#0519-fmc-container-read-back-and-tampered), [bootloader](../experiments/05_fmc-fsp-boot-inputs.md#0523-wprmeta-bootloader-description-and-images) |
 | `0x83d`, registry boot keys | [boot-input keys](../experiments/02_registry-and-static-audit.md#022-boot-input-keys-change-what-the-fmc-receives) |
+| FMC parser codes | [the 09 group](../experiments/09_fmc-cold-boot-parsers.md) |
 | NV status codes | [crashed GSP](../experiments/01_software-register-writes.md#011-first-register-write-hits-a-crashed-gsp), [16 MiB heap](../experiments/05_fmc-fsp-boot-inputs.md#0514-16-mib-heap-request-wedges-the-boot), [GR_CTX rejected](../experiments/01_software-register-writes.md#017-per-context-registers-need-a-caller-owned-channel) |
 | Sentinels and PRI telemetry | [live probes](../experiments/03_fecs-and-gr-context.md#031-live-fecs-fsp-and-sec2-probes), [FSP EMEM](../experiments/04_hs-sec2-fsp-memory.md#042-fsp-emem-pointer-writes-are-dropped), [sentinel analysis](../experiments/08_assessment-and-cross-checks.md#089-sentinel-and-raw-function-analysis), [PRISCV split](../experiments/04_hs-sec2-fsp-memory.md#043-priscv-block-is-split-per-master), [live ICD](../experiments/04_hs-sec2-fsp-memory.md#044-priscv-icd-is-a-live-debug-port) |
 | WPR fill `0xbad0ac00` | [closed FB route](../experiments/05_fmc-fsp-boot-inputs.md#0525-fb-route-shut) |

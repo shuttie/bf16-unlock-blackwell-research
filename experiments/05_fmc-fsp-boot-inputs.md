@@ -1300,15 +1300,20 @@ The field matrix, one field per run:
 
 | Field (oracle #) | Value | Result |
 |---|---|---|
-| `sizeOfBootloader` (8) | `0x47001` | **[`0x82e`](../specs/08_errors-and-logging.md#boot-error-codes)** on both cards; the length is checked |
+| `sizeOfBootloader` (8) | `0x47001` | **[`0x82e`](../specs/08_errors-and-logging.md#boot-error-codes)** on both cards; the value is misaligned |
 | `sysmemAddrOfBootloader` (9) | none | not run |
 | `bootloaderCodeOffset` (10) | `0xffffffff` | boots; unchecked or unused |
 | `bootloaderDataOffset` (11) | `0xffffffff` | boots; unchecked or unused |
-| `bootloaderManifestOffset` (12) | `0xffffffff` | **[`0x885`](../specs/08_errors-and-logging.md#boot-error-codes)** on both cards; the offset is used |
+| `bootloaderManifestOffset` (12) | `0xffffffff` | **[`0x885`](../specs/08_errors-and-logging.md#boot-error-codes)** on both cards; the value is out of range |
 | `sysmemAddrOfSignature` (13) | none | not run |
 | `sizeOfSignature` (14) | `0x100000` | boots; the verifier uses a fixed 0x1000 parse |
 | `sysmemAddrOfRadix3Elf` (15) | none | not run |
 | `sizeOfRadix3Elf` (16) | `0x100000` | **[`0xaff`](../specs/08_errors-and-logging.md#boot-error-codes)**, info `0xb`; bound into authentication |
+
+The address fields and the aligned manifest sweep were run later in [the parser
+group](09_fmc-cold-boot-parsers.md). The `sizeOfBootloader` check is 4 KiB
+alignment, and an aligned non-zero manifest offset draws `0x841`; the `0x885`
+here is an out-of-range refusal.
 
 The error lines:
 

@@ -182,12 +182,15 @@ analysis](../experiments/07_plaintext-corpus.md#074-fmc-container-format-and-sig
 
 The signature section of the GSP-RM image is separate. `.fwsignature_gb20x` is
 `0x1000` bytes: a 20-byte header (`0x00020001`, size `0x8c8`, count `0x0c`,
-`0x0101`, stride `0x200`) followed by four 384-byte high-entropy blocks on a
-`0x200` stride. It contains no SHA-384 of `.fwimage`, no valid P-384 point at any
-`0x04` candidate, and no block shared across the ten chip sections. The GSP-RM
-verification key is therefore fused or inside the FMC, not supplied by the
-image. See [the COT key
-anchor](../experiments/05_fmc-fsp-boot-inputs.md#0518-cot-public-key-anchored).
+`0x0101`, stride `0x200`), four 0x200 slots holding 0x180-byte records, and a
+plaintext table at `0x814`. The FMC verifies slots 0 and 1; slots 2 and 3 are
+inert on this boot path. The record size at `+0x10` must be in `[0x180, 0x200]`,
+and the table tail at `0x87c` is a mode with the valid set `{1,2}`. It contains
+no SHA-384 of `.fwimage`, no valid P-384 point at any `0x04` candidate, and no
+block shared across the ten chip sections. The GSP-RM verification key is
+therefore fused or inside the FMC, not supplied by the image. See [the COT key
+anchor](../experiments/05_fmc-fsp-boot-inputs.md#0518-cot-public-key-anchored)
+and [the section layout](../experiments/09_fmc-cold-boot-parsers.md#092-the-signature-section-layout-and-the-checked-records).
 
 ## GspRmBoot
 

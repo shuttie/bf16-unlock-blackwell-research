@@ -152,25 +152,28 @@ and [the key anchor](../experiments/05_fmc-fsp-boot-inputs.md#0518-cot-public-ke
 | Field | Stock | Behavior |
 |---|---|---|
 | `magic` | `0xdc3aae21371a60b3` | Wrong value draws `0x827` |
-| `revision` | 1 | Not varied |
+| `revision` | 1 | Must be 1; any other value draws `0x828` |
 | `verified` | 0 | Accepted at boot; does not bypass image authentication |
-| `fbSize` | 0 | Untested |
+| `fbSize` | 0 | Ignored on this path; `0xffffffff` still boots |
 | `frtsSize` | `0x100000` | Disagreement with the COT is ignored; the COT value wins |
 | `gspFwHeapSize` | `0x8700000` | Honored; grows the WPR downward |
-| `nonWprHeapSize` | 0 | Untested |
-| `sizeOfBootloader` | `0x47000` | `0x47001` draws `0x82e` |
+| `nonWprHeapSize` | `0x300000` | Honored 1:1; the heap start moves by the requested delta; `0xffffffff` wedges with WPR2 up |
+| `sizeOfBootloader` | `0x47000` | Must be 4 KiB-aligned; aligned values set the authentication read length; 256 MiB draws `0x836` |
 | `bootloaderCodeOffset` | `0xf200` | A wild value still boots; unused on this path |
 | `bootloaderDataOffset` | `0xa00` | A wild value still boots; unused on this path |
-| `bootloaderManifestOffset` | 0 | A wild value draws `0x885` |
-| `sizeOfSignature` | `0x1000` | `0x100000` still boots; the verifier uses a fixed `0x1000` parse |
+| `bootloaderManifestOffset` | 0 | Must be 0; aligned non-zero draws `0x841`, out-of-range draws `0x885` |
+| `sizeOfSignature` | `0x1000` | `0x100000` still boots; the verifier reads the section at `sysmemAddrOfSignature` |
 | `sizeOfRadix3Elf` | 72,830,976 | `0x100000` draws `0xaff`, additional info `0xb` |
+| `sysmemAddrOfBootloader` | the `GspRmBoot` buffer | A moved address falls through to image authentication (`0xaff`) |
+| `sysmemAddrOfSignature` | the 4 KiB section | A 4-byte-aligned pointer with a header-magic check; unaligned draws `0x885`, wrong magic `0xa97` |
+| `sysmemAddrOfRadix3Elf` | the GSP-RM image | Every moved value draws `0x83e` |
 
 The field matrix is in [the magic/verified
 test](../experiments/05_fmc-fsp-boot-inputs.md#0511-wprmeta-magic-enforced-verified-accepted),
 [the size-disagreement
 test](../experiments/05_fmc-fsp-boot-inputs.md#0512-wprmeta-and-cot-sizes-disagree),
-and [the bootloader
-description](../experiments/05_fmc-fsp-boot-inputs.md#0523-wprmeta-bootloader-description-and-images).
+and the [cold-boot parser
+group](../experiments/09_fmc-cold-boot-parsers.md).
 
 **Heap size is a second layout lever.**
 

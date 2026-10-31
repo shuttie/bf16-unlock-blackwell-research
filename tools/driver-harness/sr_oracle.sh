@@ -14,6 +14,7 @@ mkdir -p "$TOOL_DIR/runs"
 #         3  sizeOfSuspendResumeData          (default 0x66f0000 = half stock)
 #         4  sysmemAddrOfSuspendResumeData    (value required; radix3 pointer)
 #         5  flags                            (default 1)
+#         6  radix3 address + delta           (value required)
 #
 # The host builds this structure in kgspPrepareSuspendResumeData_TU102 and the
 # FMC is handed it instead of the WprMeta on resume (bootMode=1), so each field
@@ -39,9 +40,9 @@ OUT="$TOOL_DIR/runs/sr_oracle_$(date +%Y%m%d_%H%M%S)"
 PM_TEST_SAVED=""
 
 case "${1:-}" in
-    0|1|2|3|4|5) VARY="$1" ;;
+    0|1|2|3|4|5|6) VARY="$1" ;;
     *)
-        echo "usage: sudo $0 <0|1|2|3|4|5> [value]" >&2
+        echo "usage: sudo $0 <0|1|2|3|4|5|6> [value]" >&2
         exit 2
         ;;
 esac
@@ -56,6 +57,10 @@ if [ -z "$VALUE" ]; then
         5) VALUE=0x1 ;;
         4)
             echo "field 4 (radix3 sysmem address) needs an explicit value" >&2
+            exit 2
+            ;;
+        6)
+            echo "field 6 (radix3 address delta) needs an explicit value" >&2
             exit 2
             ;;
     esac
@@ -94,13 +99,19 @@ say "== build ok"
 
 "$DIR/load_patched.sh" 2>&1 | tee -a "$OUT/load.log"
 load_rc=${PIPESTATUS[0]}
+say "== loaded"
+date -Is > "$OUT/phase_loaded"
 
 PM_TEST_SAVED="$(cat /sys/power/pm_test)"
 dmesg -C 2>/dev/null || true
 say "== pm_test=devices suspend/resume cycle"
 echo devices > /sys/power/pm_test
+# Disk marker: survives a failed resume.  A hang leaves this file and no
+# phase_post_resume, which distinguishes "never resumed" from "restore failed".
+date -Is > "$OUT/phase_pre_suspend"
 timeout 180 sh -c 'echo mem > /sys/power/state'
 susp_rc=$?
+date -Is > "$OUT/phase_post_resume"
 reset_pm_test
 say "== suspend test rc=$susp_rc"
 

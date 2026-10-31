@@ -119,6 +119,7 @@ The model predicts the measured layout across the tested window:
 | moved | `0x10500000` | `0x7d8920000` | `0x7e5900000` | `0xE9C0000` |
 | 1 GiB | `0x40000000` | `0x7a8e20000` | `0x7b5e00000` | n/a |
 | heap 256 MiB | `0x1b40000` | `0x7df9e0000` | `0x7f42c0000` | `0x7900000` |
+| non-WPR heap 256 MiB | `0x1b40000` | `0x7d75e0000` | `0x7f42c0000` | `0xFD00000` |
 
 The COT offset moves the whole WPR; the heap-size request grows it downward while
 the top stays anchored to the COT base. The COT size must be exactly `0x100000`
@@ -134,6 +135,13 @@ test](../experiments/05_fmc-fsp-boot-inputs.md#057-misaligned-frts-base-draws-0x
 [the layout model](../experiments/05_fmc-fsp-boot-inputs.md#059-cot-offset-positions-the-whole-layout),
 [the 1 GiB window](../experiments/05_fmc-fsp-boot-inputs.md#0510-placement-window-reaches-1-gib),
 and [the heap-size test](../experiments/05_fmc-fsp-boot-inputs.md#0513-heap-size-request-honoured-downward).
+
+`nonWprHeapSize` is the other heap lever. A 256 MiB request moves the
+unprotected heap start down by exactly the increase over the 3 MiB stock value,
+while the heap end stays at the stock WPR base and FRTS stays anchored
+([the non-WPR heap
+test](../experiments/09_fmc-cold-boot-parsers.md#097-the-non-wpr-heap-size-is-a-11-layout-lever)).
+A 4 GiB request wedges the boot with WPR2 armed.
 
 ## Host FB reads and the WPR
 

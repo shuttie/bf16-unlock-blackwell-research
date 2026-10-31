@@ -139,7 +139,8 @@ a cold power cycle if WPR2 survives.
 | Script | What it varies |
 |---|---|
 | `fmc_oracle.sh <0..6> [value]` | [COT](../../specs/01_boot-chain.md#cot-v2) field: size, offset, boot-args pointer, FMC pointer, hash flip, self-signed key |
-| `wpr_oracle.sh <0..7> [value]` | [`WprMeta`](../../specs/01_boot-chain.md#wprmeta): magic, revision, `verified`, `fbSize`, `frtsSize`, `gspFwHeapSize`, `nonWprHeapSize` |
+| `wpr_oracle.sh <0..18> [value]` | [`WprMeta`](../../specs/01_boot-chain.md#wprmeta): every field, the bootloader description, and the signature and radix3 address deltas |
+| `sig_oracle.sh <stock\|xor\|poke> ...` | Edits the GSP-RM signature buffer: `xor <off> [xor]` or `poke <off> <width> <value>` |
 | `wpr_verified_patch_test.sh` | Patched GSP-RM image plus preset `verified` |
 | `run_gsp_patch_test.sh` | One-instruction GSP-RM patch, rejected by the FMC |
 | `bootbuf_dump.sh` | Dumps the host `GspRmBoot` buffer pre-COT and post-boot |
@@ -171,7 +172,7 @@ samples, then run `boot-collect`.
 | Script | What it does |
 |---|---|
 | `sr_resume_test.sh` | Forces `pm_test=devices` and captures the stock [`SRMeta`](../../specs/01_boot-chain.md#suspendresume) |
-| `sr_oracle.sh <0..5> [value]` | Varies [`SRMeta`](../../specs/01_boot-chain.md#suspendresume) magic, revision, size, radix3 pointer or flags |
+| `sr_oracle.sh <0..6> [value]` | Varies [`SRMeta`](../../specs/01_boot-chain.md#suspendresume) magic, revision, size, radix3 pointer, flags, or a radix3 address delta |
 | `sr_dump_test.sh` | Dumps the suspend state through the host-built radix3 |
 
 The trigger is:
@@ -181,8 +182,10 @@ echo devices > /sys/power/pm_test
 echo mem > /sys/power/state
 ```
 
-A bad `SRMeta` field hangs the resume with no host log. Use netconsole or the
-phase-marker files before probing non-stock values.
+A bad `SRMeta` field hangs the resume with no host log. The oracle writes
+`phase_loaded`, `phase_pre_suspend`, and `phase_post_resume` in its run
+directory; a hang leaves the first two and no post-resume marker. Use
+netconsole as well when a serial or network console is available.
 
 ## PRISCV ICD
 

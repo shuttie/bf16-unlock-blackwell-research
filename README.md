@@ -1,6 +1,6 @@
 # RTX 5090 BF16 Unlock experiments
 
-This repo is a log of 75 unsuccessful experiments I did to unlock BF16 full rate on
+This repo is a log of 84 unsuccessful experiments I did to unlock BF16 full rate on
 the 5090, the way it was done on [4090](https://github.com/JustAResearcher/gpu-unlock-ada)
 and [3090](https://github.com/Zagitta/gpu-unlock) cards.
 
@@ -178,7 +178,7 @@ the experiment record with the commands and artifacts.
 | Used the driver's registry knobs (`RMOverrideSmSpeedSelect*`, `RMDisableFeatureDisablement`) | Parsed and stored, no rate or bank change | Dead, measured | [registry keys](experiments/02_registry-and-static-audit.md) |
 | Poked the GPU command ring ([FECS doorbell](specs/03_register-map.md#fecs) and [graphics engine context buffers](specs/03_register-map.md#sm-and-gr)) | Payloads are addresses and sizes, no selector field | Dead, measured/static | [FECS and context](experiments/03_fecs-and-gr-context.md) |
 | Read firmware memory (GSP, FSP, and SEC2 local memory; [RISC-V debug engine](specs/06_gsp-riscv-and-priscv.md#priscv-register-map)) | Local memory empty or locked to PL3; the debug engine reads the 14.4 MB GSP-RM code segment after a halt, not secure memory or the WPR | Dead or diagnostic | [secure memory](experiments/04_hs-sec2-fsp-memory.md) |
-| Fed the boot firmware bad input (the host-built [boot descriptors](specs/01_boot-chain.md#wprmeta)) | Ten structured error codes, control over where firmware lands in VRAM, authentication enforced | Live input, no exploit | [boot inputs](experiments/05_fmc-fsp-boot-inputs.md) |
+| Fed the boot firmware bad input (the host-built [boot descriptors](specs/01_boot-chain.md#wprmeta)) | Seventeen structured error codes, control over where firmware lands in VRAM, authentication enforced | Live input, mapped, no exploit | [boot inputs](experiments/05_fmc-fsp-boot-inputs.md), [parser map](experiments/09_fmc-cold-boot-parsers.md) |
 | Hooked suspend/resume (the host-built [descriptor and page table](specs/01_boot-chain.md#suspendresume)) | Page table is plaintext; saved state is encrypted per boot and card | Live structure, no exploit yet | [suspend/resume](experiments/06_sr-resume.md) |
 | Edited the [vBIOS](specs/05_vbios-and-devinit.md) and its [init tables](specs/05_vbios-and-devinit.md#devinit-authentication), including the no-flash loader route | No FEAT address in plaintext, tables authenticated, custom route tops out at PL2 | Dead, static | [vBIOS](experiments/07_plaintext-corpus.md#073-the-vbios-has-no-feat-address), [devinit](experiments/05_fmc-fsp-boot-inputs.md#0522-vbios-devinit-table-scan) |
 | Raced the reset (the [PL2-writable window](specs/02_privilege-and-rate-control.md#privilege-levels-and-the-plm) after an FLR) | Window is 1.32 s; the re-lock lands 1.85 s before GSP-RM starts | Dead, measured | [reset window](experiments/01_software-register-writes.md#016-the-post-reset-window-closes-before-gsp-rm) |
@@ -188,7 +188,7 @@ is negative too: three known-answer variants and both debug containers over all
 16! permutations, under five mode variants. No key came out.
 
 Full records, commands, and artifacts are in [the experiment
-files](experiments/) and [the raw log](RAW_EXPERIMENT_LOG.md).
+files](experiments/).
 
 ## Where it stands
 
@@ -196,9 +196,12 @@ The open leads, ranked by the decision each one buys, are in [Open
 leads](IDEAS.md). The short version: the FEAT readout and fuse target is
 validated ([the reference
 dump](experiments/08_assessment-and-cross-checks.md#0810-an-rtx-pro-6000-reference-dump));
-the `SS0`/`SS1` override format is still open. Next are the vBIOS app `0x23`
-tail and the suspend/resume saved state, then the boot-input race. The parser
-and per-SM probes follow.
+the `SS0`/`SS1` override format is still open. The cold-boot FMC parser map is
+measured ([the parser
+group](experiments/09_fmc-cold-boot-parsers.md)): the boot inputs are bounded or
+exact, and the image bytes are authenticated. Next is the suspend/resume
+descriptor and page table, then the FSP framing. The vBIOS app `0x23` tail and
+the per-SM probes follow.
 
 The [RISC-V debug
 engine](experiments/04_hs-sec2-fsp-memory.md#044-priscv-icd-is-a-live-debug-port)
@@ -253,10 +256,11 @@ These specs are that material, cleaned up.
 | [Privilege and rate control](specs/02_privilege-and-rate-control.md) | The three privilege levels, the permission mask, the FEAT and fuse banks, how a 3-bit selector becomes an SM issue rate |
 | [Register map](specs/03_register-map.md) | Every register block I measured, with stock values and a cross-part comparison |
 | [Firmware formats](specs/04_firmware-formats.md) | The FMC container and signature format, the boot image, the GSP-RM image layout and address model, its module map |
+| [FMC parsers](specs/09_fmc-parsers.md) | The FMC's checks on the host boot inputs, the signature section layout, and the pointer rules |
 | [vBIOS and devinit](specs/05_vbios-and-devinit.md) | The 2 MiB flash map, PCI image chain, info table, microcode table, and how the init tables are authenticated |
 | [GSP RISC-V and PRISCV](specs/06_gsp-riscv-and-priscv.md) | The GSP's register blocks, the debug engine, its command set, and the 14.4 MB code window |
 | [Memory and host access](specs/07_memory-and-host-access.md) | The card's memory windows, the protected firmware region, framebuffer heaps, and the sentinel fills that mark refusals |
-| [Errors and logging](specs/08_errors-and-logging.md) | The ten boot error codes, driver status codes, sentinels, and the GSP log format and decoder |
+| [Errors and logging](specs/08_errors-and-logging.md) | The boot error codes, driver status codes, sentinels, and the GSP log format and decoder |
 
 Most of this was measured on the two cards. Where a value came from a public
 header or is carried over from Ada/Ampere, the spec says so.

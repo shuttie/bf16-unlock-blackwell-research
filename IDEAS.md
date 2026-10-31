@@ -18,269 +18,150 @@
   write mask admits PL3 (boot firmware) only, and the pre-lock writer runs
   before the host.
 - The full-rate readout is measured: two RTX PRO 6000s read
-  `FEAT_READOUT_1 = 0` with every arithmetic speed fuse at 0. The remaining
-  target question is the `SS0`/`SS1` override payload. Two leads could reach a
-  primitive cheaply: the SR (suspend/resume) saved state and the boot-input
-  race.
-- The rest are parser and address probes around the FMC (first-stage mutable
-  GPU firmware), the FSP (security processor), and the per-SM register space.
+  `FEAT_READOUT_1 = 0` with every arithmetic speed fuse at 0.
+- The cold-boot parser map is measured. The [FMC parser
+  group](experiments/09_fmc-cold-boot-parsers.md) varied every host field and
+  buffer byte the FMC consumes; the result is a bounded parser, and no
+  authentication bypass appeared.
+- The remaining PL3 parsers are the [suspend/resume
+  descriptor](#sr-descriptor-and-page-table) and the [FSP
+  framing](#fsp-framing). The SR harness now has a relative radix3 address and
+  disk phase markers.
+- The rest are foothold probes, cheap reads, and offline questions. The
+  override payload (C04) becomes relevant only after a writer exists.
 
 ## The index
 
+Rows are ordered by whether the lead can produce the PL3 primitive, not by
+cost.
+
 | ID | Lead | What it tests | Cost | Decision value |
 |---|---|---|---|---|
-| C04 | [Override payload](#override-payload-format) | Does the SS0/SS1 override set full rate? | 1 PRO cold-boot series | Settles the write target |
-| C03 | [vBIOS app 0x23](#vbios-app-0x23) | Is there a host-editable pre-lock template? | 1 day + 1 boot | Only direct-unlock candidate |
-| C01 | [SR state integrity](#sr-state-integrity) | Is the saved state malleable? | 1 day | PL2 code execution |
+| C01 | [SR descriptor and page table](#sr-descriptor-and-page-table) | Can a malformed resume descriptor or PTE steer the parser? | 1–2 days | PL3 code execution |
+| C02 | [Carveout layout fields](#carveout-layout-fields) | Do the ACR and `wprCarveout*` fields move the protected layout? | 1 day | Layout lever |
 | C20 | [Boot-input race](#boot-input-race) | Is there a hash-to-use window? | 1–2 days | PL2 or PL3 code execution |
-| C02 | [WPR layout](#wpr-layout) | Can a mis-sized WPR expose the boot image? | 1–2 days | Decrypted boot corpus |
-| C05 | [Below-PLM lock](#below-plm-lock) | Is a PL3 write even sufficient? | 1 hour | Changes the whole plan |
-| C06 | [Name the writer](#name-the-writer) | Is the re-lock FSP or PMU? | 1 hour | Names the pre-lock actor |
+| C13 | [FSP framing](#fsp-framing) | Is the ROM's message parser weak at the framing layer? | 2–3 days | PL3 parser surface |
+| C11 | [Context patch buffer](#context-patch-buffer) | Can the host edit a GSP-consumed pointer list? | 1 day | PL2 write primitive |
+| C19 | [SR saved-state malleability](#sr-saved-state-malleability) | Is the saved ciphertext malleable? | 1 day | PL2 foothold |
+| C05 | [Below-PLM lock](#below-plm-lock) | Does a PL3 write even suffice? | 1 hour | Prerequisite for any PL3 plan |
 | C12 | [Host FECS doorbell](#host-fecs-doorbell) | Can the host command FECS? | 1 hour | PL0 consumer interface |
-| C07 | [COT address trust](#cot-address-trust) | Does the FSP trust a relocated COT pointer? | 1 run | Pre-auth address trust |
-| C08 | [Signature header](#signature-header) | Is the signature header parsed before authentication? | 1 run each | Pre-auth parser surface |
-| C09 | [WprMeta addresses](#wprmeta-addresses) | Are the address fields consumed? | 1 day | Address trust |
-| C10 | [Per-SM channel](#per-sm-channel) | Is per-SM reachable with a real channel? | 1–2 days | Last non-PL3 register space |
-| C11 | [Context patch buffer](#context-patch-buffer) | Can the host edit the post-fill context image? | 1 day | PL2 pointer primitive |
-| C13 | [FSP framing](#fsp-framing) | Is the FSP parser weak at the framing layer? | 2–3 days | PL3 parser surface |
-| C15 | [Readout decode](#readout-decode) | What are the un-decoded readout bits? | offline | May change the target |
-| C16 | [The 0x137200 register](#the-0x137200-register) | What is the refused PL2 register? | offline, read-only | Free lead |
+| C16 | [The 0x137200 register](#the-0x137200-register) | What is the refused PL2 register? | 1 hour | Free lead |
 | C17 | [Ada payload from PL2](#ada-payload-from-pl2) | Does the exact payload take a different gate? | minutes | Completes the record |
+| C06 | [Name the writer](#name-the-writer) | Is the re-lock FSP or PMU? | 1 hour | Names the pre-lock actor |
+| C10 | [Per-SM channel](#per-sm-channel) | Is per-SM reachable with a real channel? | 1–2 days | Last non-PL3 register space |
+| C15 | [Readout decode](#readout-decode) | What are the un-decoded readout bits? | offline | May change the target |
+| C03 | [vBIOS app 0x23](#vbios-app-0x23) | Is the plaintext data tail a devinit template? | offline decode | Only direct-unlock candidate |
+| C04 | [Override payload](#override-payload-format) | Does the SS0/SS1 override set full rate? | 1 PRO cold-boot series | Validates a writer, not a route |
 | C18 | [vBIOS ucode corpus](#vbios-ucode-corpus) | Can the FECS/GPCCS consumer be decoded? | weeks | Answers the rate semantics |
 
-## Override payload format
+## Measured: the cold-boot parser map
 
-**Where it comes from.** The full-rate readout and fuse target is measured on
-two RTX PRO 6000s: both read `FEAT_READOUT_1 = 0` with every arithmetic speed
-fuse at 0, and card A runs BF16 at 518 TF/s with the FP16-accumulate rate equal
-([the reference
-dump](experiments/08_assessment-and-cross-checks.md#0810-an-rtx-pro-6000-reference-dump)).
-Both cards also have every `SS0`/`SS1` enable bit clear, so the full rate comes
-from the fuses, not a live override. The override payload format is the
-remaining target question. The two cards differ in the runtime words, but a
-same-card cold-boot series is unsampled.
+The [boot-input parser group](experiments/09_fmc-cold-boot-parsers.md) varied
+every host field and buffer byte the FMC consumes at cold boot. The result is a
+bounded parser; no primitive appeared. The check order and section layout are in
+[the parser spec](specs/09_fmc-parsers.md).
 
-**Try.** Run the existing FP16-accumulate mode on the 5090 to measure its cap
-ratio locally ([the issue-rate probe](tools/issue-rate-probe/)). Get a same-card
-cold-boot series on a PRO 6000 and compare `SS0`/`SS1` movement with the 5090's
-([the FEAT-bank boot
-test](experiments/05_fmc-fsp-boot-inputs.md#0520-feat-bank-across-boots-and-flr)).
-An authoritative header or a PL3 write is the only way to settle the payload's
-efficacy.
+- The [bootloader size](experiments/09_fmc-cold-boot-parsers.md#091-the-bootloader-size-is-a-4-kib-aligned-authentication-length)
+  is a 4 KiB alignment check. Aligned values set the authentication length, and
+  256 MiB hits a size limit. There is no exact-length check.
+- The [signature section](experiments/09_fmc-cold-boot-parsers.md#092-the-signature-section-layout-and-the-checked-records)
+  is a header, four slots, and a table. Slots 0 and 1 are verified; slots 2 and
+  3 are not.
+- The [record size](experiments/09_fmc-cold-boot-parsers.md#093-the-signature-record-size-is-a-bounded-window)
+  must be in `[0x180, 0x200]`; above it is a bounds refusal. The header words at
+  `+0x00`, `+0x04`, `+0x08`, and `+0x0c` are ignored on the stock path.
+- The [table tail](experiments/09_fmc-cold-boot-parsers.md#094-the-signature-table-and-mode-fields-are-validated)
+  is a mode with the valid set `{1,2}`; the length and flag fields at `0x880`
+  and `0x884` are bound into image authentication.
+- The [bootloader and radix3 addresses](experiments/09_fmc-cold-boot-parsers.md#095-the-bootloader-and-radix3-addresses-are-consumed-pre-auth)
+  are pinned (`0xaff` and `0x83e`). The [signature
+  address](experiments/09_fmc-cold-boot-parsers.md#096-the-signature-address-is-a-4-byte-aligned-pointer)
+  is a 4-byte-aligned pointer with a magic check; it reads the host buffer at
+  the chosen address, but that is the buffer the host already controls.
+- The [revision and manifest
+  offset](experiments/09_fmc-cold-boot-parsers.md#098-the-revision-and-manifest-offset-are-exact-checks)
+  are exact; `fbSize` is inert.
+- The [image bytes](experiments/09_fmc-cold-boot-parsers.md#099-the-bootloader-image-bytes-are-authenticated-end-to-end)
+  are all behind image authentication.
+- The [non-WPR heap size](experiments/09_fmc-cold-boot-parsers.md#097-the-non-wpr-heap-size-is-a-11-layout-lever)
+  is a 1:1 layout lever from a fixed WPR base; it does not expose the WPR.
 
-**Decision.** If the PRO's `SS0`/`SS1` move across cold boots like the 5090's,
-the words are runtime state and the override path stays unvalidated. If a PRO
-boot shows an enable bit, that is the payload. A PL3 write remains the decisive
-test.
+What remains from this group: the second-buffer signature test, the `0x836`
+boundary, the mode-2 record layout, and the [carveout
+fields](#carveout-layout-fields). None has a run behind it.
 
-## vBIOS app 0x23
+## SR descriptor and page table
 
-**Where it comes from.** The app `0x23` data tail is the only vBIOS artifact
-carrying the exact FEAT PLM (privilege-level mask) values, in low-entropy
-sentinel-structured data ([the devinit
-scan](experiments/05_fmc-fsp-boot-inputs.md#0522-vbios-devinit-table-scan)).
-The published scan looked for literal addresses, which an implicit-addressing
-template would not contain ([the vBIOS
-scan](experiments/07_plaintext-corpus.md#073-the-vbios-has-no-feat-address)).
-
-**Try.** Decode the data as a 4-byte-stride array against the live block maps
-([the FEAT bank](specs/03_register-map.md#feat-bank)). Map the four ucode
-app/target IDs to their loaders in the GSP-RM ([the microcode
-table](specs/05_vbios-and-devinit.md#microcode-table)). Then edit one benign
-byte in the host copy of the image, boot, and if it boots change `0xfffffb8f`
-at `0xD40E8` to `0xffffffff` and read `0x823804` and `0x823800`.
-
-**Decision.** A clean `0xaff` closes the data-edit route. A boot with the edit
-opens the pre-lock template. Use [the vBIOS tools](tools/vbios-tools/) for the
-dump and parse.
-
-## SR state integrity
-
-**Where it comes from.** The saved state is encrypted, but the log only tests
-confidentiality: entropy and a scan for known constants ([the saved
-state](experiments/06_sr-resume.md#063-the-saved-state-is-high-entropy-ciphertext)).
-It never flips a bit. The state spans the WPR (write-protected VRAM region) and
-includes the GSP-RM ELF code ([the
-radix3](experiments/06_sr-resume.md#064-the-radix3-is-plaintext-and-fully-mapped)),
-and the host builds the radix3 (the three-level page table) ([the host-driven
+**Where it comes from.** The host builds [`SRMeta`](specs/01_boot-chain.md#suspendresume)
+in unprotected memory and the FMC is handed it on resume instead of `WprMeta`
+([the host-driven
 cycle](experiments/06_sr-resume.md#061-the-suspend-and-resume-cycle-is-host-driven)).
+The descriptor carries `sysmemAddrOfSuspendResumeData` and
+`sizeOfSuspendResumeData`, and the radix3 page table is plaintext and fully
+mapped ([the
+radix3](experiments/06_sr-resume.md#064-the-radix3-is-plaintext-and-fully-mapped)).
+Only the magic was varied; a wrong value hangs the resume
+([the bad-magic
+test](experiments/06_sr-resume.md#062-a-bad-srmeta-magic-hangs-the-resume)).
+The size, the pointer, the flags, and the PTE values are host-controlled and
+untested.
 
-**Try.** Add phase markers or netconsole, then use [the driver
-harness](tools/driver-harness/) to flip one ciphertext bit in a zero page, a
-heap page, and a code page. Then permute two valid page-table entries. Under
-CTR or ECB, a code flip is a controlled patch of known plaintext.
+**Try.** The [driver harness](tools/driver-harness/) now has field 6 (radix3
+address plus a delta) and disk phase markers (`phase_loaded`,
+`phase_pre_suspend`, `phase_post_resume`). A failed resume leaves the
+pre-suspend marker and no post-resume marker. Run the stock control first, then
+`revision` (0, 1, 3), `flags` (1, 2), `sizeOfSuspendResumeData` (stock, half,
+16 MiB), and radix3 deltas. Then a PTE that points at a duplicate page, a PTE
+that crosses a 4 MiB run boundary, and an unmapped entry.
 
-**Decision.** A code flip that boots and executes gives PL2 code execution. A
-hang on every data-page flip points to authentication.
+**Decision.** A resume that completes with a changed size or pointer, or a new
+hang point, is a parser surface. Heavy Secure validating the PTEs before walking
+them closes the table. Every failed variant costs a reboot.
+
+## Carveout layout fields
+
+**Where it comes from.** The two heap-size levers are measured: `gspFwHeapSize`
+moves the WPR downward ([the heap-size
+test](experiments/05_fmc-fsp-boot-inputs.md#0513-heap-size-request-honoured-downward)),
+and `nonWprHeapSize` grows the unprotected heap 1:1 from a fixed WPR base
+([the non-WPR heap
+test](experiments/09_fmc-cold-boot-parsers.md#097-the-non-wpr-heap-size-is-a-11-layout-lever)).
+The ACR (the loader before the FMC) fields and the FMC `wprCarveout*` fields in
+the boot parameters were never varied ([the boot-parameter
+print](experiments/05_fmc-fsp-boot-inputs.md#051-host-side-boot-and-static-info-instrumentation)).
+
+**Try.** Vary one ACR or carveout field per boot and read the GSCI layout. Then
+a field that moves the WPR start or the FRTS anchor.
+
+**Decision.** A boundary that moves with a host field is a layout lever. A fixed
+boundary closes the fields.
 
 ## Boot-input race
 
 **Where it comes from.** The FMC container is bound to the COT hash, and a
-static byte change draws `0x33` ([the tampered
+static byte change draws `0x33`
+([the tampered
 container](experiments/05_fmc-fsp-boot-inputs.md#0519-fmc-container-read-back-and-tampered)).
-A statically patched GSP-RM image draws `0xaff` ([the patched
+The GSP-RM and bootloader images are bound the same way and draw `0xaff`
+([the patched
 image](experiments/05_fmc-fsp-boot-inputs.md#052-patched-gsp-rm-image-rejected-by-the-fmc)).
 Every test changed bytes before the read. None changed them during it, and the
-hash-to-decrypt window is still open ([the boot error
-codes](specs/08_errors-and-logging.md#boot-error-codes)).
+hash-to-decrypt window is still open
+([the container
+record](experiments/05_fmc-fsp-boot-inputs.md#0519-fmc-container-read-back-and-tampered)).
 
-**Try.** Flip the FMC header's `bodySize` or `codeSize` at high rate while
-booting and watch for an error other than `0x33`. Then swap a plaintext GSP-RM
-image between stock and patched copies during boot. Then alternate the
-`WprMeta` bootloader, signature, and radix3 pointers between two valid copies.
+**Try.** The [cold-boot map](experiments/09_fmc-cold-boot-parsers.md) shows the
+image bytes are behind authentication and the bootloader and radix3 pointers are
+pinned. The race is the remaining way past the image hash. Flip the FMC header's
+`bodySize` or `codeSize` at high rate while booting and watch for an error other
+than `0x33`. Then swap a plaintext GSP-RM image between stock and patched copies
+during boot. Then alternate the `WprMeta` bootloader and radix3 pointers between
+two valid copies.
 
 **Decision.** A patched plaintext GSP-RM that boots is PL2 code execution. A
 modified FMC image that boots runs at PL3 and can write the FEAT gate. A uniform
 `0x33` or `0xaff` closes the race. Use [the driver
 harness](tools/driver-harness/) and expect reboots.
-
-## WPR layout
-
-**Where it comes from.** The FMC honors `gspFwHeapSize` and does not
-sanity-check it ([the heap-size
-test](experiments/05_fmc-fsp-boot-inputs.md#0513-heap-size-request-honoured-downward)),
-and the BAR0 PRAMIN window already reads framebuffer outside the WPR ([the FB
-route](experiments/05_fmc-fsp-boot-inputs.md#0525-fb-route-shut)). `fbSize`,
-`nonWprHeapSize`, the ACR (the loader before the FMC) fields, and the FMC
-`wprCarveout*` fields were never varied ([the WprMeta
-spec](specs/01_boot-chain.md#wprmeta)).
-
-**Try.** Vary one field per run, then read the poison boundary, the boot-image
-slot, the ELF code, and the non-WPR heap after boot ([the memory
-spec](specs/07_memory-and-host-access.md#wpr-and-frts-layout)).
-
-**Decision.** A boundary that moves with a host field may leave the decrypted
-boot image readable. A fixed boundary closes the field.
-
-## Below-PLM lock
-
-**Where it comes from.** FUSE writes drop even where the page mask reads
-write-all ([the FUSE
-test](experiments/01_software-register-writes.md#014-the-fuse-shadow-and-the-inert-modifier)),
-and FECS PL2 writes drop under masks that admit L2 ([the FECS
-probe](experiments/03_fecs-and-gr-context.md#031-live-fecs-fsp-and-sec2-probes)).
-The FEAT drop is consistent with the L3 mask, but it has never been tested from
-a level the mask admits ([the PLM
-spec](specs/02_privilege-and-rate-control.md#privilege-levels-and-the-plm)). The
-PRO 6000 has the same PL3-only gate at full rate, so the gate is not the cap; the
-fuses are ([the reference
-dump](experiments/08_assessment-and-cross-checks.md#0810-an-rtx-pro-6000-reference-dump)).
-
-**Try.** Read and write the fuse security words `0x82038c`, `0x8203f0`,
-`0x8200d0`–`0x8200fc`, and `0x820040`; read the FEAT words across the FLR
-(function-level reset) window.
-
-**Decision.** If FEAT has a below-PLM lock, a PL3 payload is not sufficient.
-That changes the whole plan.
-
-## Name the writer
-
-**Where it comes from.** The PLM re-lock is GPU-side and happens before the
-first open ([the re-lock
-test](experiments/05_fmc-fsp-boot-inputs.md#0521-plm-re-lock-is-autonomous-devinit)),
-but the "PMU" (power-management microcontroller) attribution is an inference.
-The reset mask admits both L2 and L3,
-and the FSP is equally admitted ([the reset
-window](experiments/01_software-register-writes.md#016-the-post-reset-window-closes-before-gsp-rm)).
-
-**Try.** Poll the FSP core status, scratch, engine, and PLM alongside the FEAT
-PLM across the FLR window.
-
-**Decision.** FSP activity at the re-lock names the FSP or BootROM class. No
-activity leaves the PMU or a hardware latch in play.
-
-## Host FECS doorbell
-
-**Where it comes from.** The FECS (graphics front-end microcode) block is
-read/write-all at `0x4096d0`, and the GSP's doorbell write landed ([the FECS
-probe](experiments/03_fecs-and-gr-context.md#031-live-fecs-fsp-and-sec2-probes)).
-Every doorbell write was GSP-mediated; the host never wrote `0x409500` or
-`0x409504`, and the handler is encrypted ([the command
-protocol](experiments/03_fecs-and-gr-context.md#032-the-fecs-command-protocol-statically)).
-
-**Try.** Host-write `0x409800`, `0x409500`, and `0x409504` with readback;
-replay the known-safe IDs `0x21` and `0x30`; if they execute, vary the `0x21`
-feature mask and read the bank. Use [register access](tools/register-access/).
-
-**Decision.** Dropped host writes close the path. Accepted writes make the
-FECS command interface a PL0 surface.
-
-## COT address trust
-
-**Where it comes from.** The COT (chain-of-trust message) hash and key are
-authenticated ([the key
-anchor](experiments/05_fmc-fsp-boot-inputs.md#0518-cot-public-key-anchored)),
-and the tampered-byte test proves the binding is to the content ([the hash
-check](experiments/05_fmc-fsp-boot-inputs.md#0516-cot-hash-authenticated-auth-failure-wedges)).
-The pointer fields were never varied, and a relocated second copy of the same
-bytes should still verify ([the COT spec](specs/01_boot-chain.md#cot-v2)).
-
-**Try.** Copy the stock container to a second buffer and point the COT at the
-copy. Then vary the length and place it across a page boundary.
-
-**Decision.** A boot proves the FSP trusts a host-chosen DMA address before
-authentication. An auth failure closes it.
-
-## Signature header
-
-**Where it comes from.** The 4 KiB signature buffer is the GSP-RM
-`.fwsignature` section in unprotected sysmem, and the FMC parses its header
-([the signature
-envelope](specs/04_firmware-formats.md#signature-envelope)). Only the
-`WprMeta` (256-byte boot descriptor) size field was varied, not the buffer's
-own count, stride, or size
-([the bootloader
-description](experiments/05_fmc-fsp-boot-inputs.md#0523-wprmeta-bootloader-description-and-images)).
-
-**Try.** Vary count `0xFFFF`, count 0, stride 0, size 0, one bit in the first
-block, and a duplicate-buffer address.
-
-**Decision.** A clean `0xaff` for every variant closes the parser. A new code
-or a hang opens it.
-
-## WprMeta addresses
-
-**Where it comes from.** The `WprMeta` field matrix skipped the three pointer
-fields and the FMC boot params ([the bootloader
-description](experiments/05_fmc-fsp-boot-inputs.md#0523-wprmeta-bootloader-description-and-images)).
-The radix3 size is bound into authentication, so the address may be consumed on
-the same path.
-
-**Try.** Relocate the bootloader, signature, and radix3 to duplicate copies;
-then vary `gspRmDescSize`, `gspRmDescOffset`, `wprCarveoutOffset`, and
-`wprCarveoutSize`.
-
-**Decision.** A boot from a relocated copy proves address trust. A refusal
-closes it.
-
-## Per-SM channel
-
-**Where it comes from.** `GR_CTX`, `TPC`, `SM`, and `QUAD` return `0x1f` with
-every route ([the GR_CTX
-probe](experiments/01_software-register-writes.md#017-per-context-registers-need-a-caller-owned-channel)).
-The host validation checks only the offset; the rejection comes from the GSP,
-so it is a caller-identity check, not proof the space is unreachable.
-
-**Try.** Issue the typed read with `hChannelTarget` set to a live channel owned
-by the calling client; then sweep `0x504xxx` read-only and compare with the FEAT
-decode.
-
-**Decision.** A successful read makes the per-SM space live. A rejection with a
-real channel closes it.
-
-## Context patch buffer
-
-**Where it comes from.** The patch buffer is host-owned, and the post-use
-differential shows 10 changed address values in 287 entries ([the patch
-differential](experiments/03_fecs-and-gr-context.md#035-the-post-use-patch-buffer-differential)).
-The host can edit it after the GSP fills it and before the next use.
-
-**Try.** Rewrite one of the 10 changed values to a valid and then an invalid
-framebuffer address; observe the launch, the GSP log, and any Xid (GPU error
-report).
-
-**Decision.** A context that uses the changed address is a host-controlled
-pointer into the GSP/FECS image. A clean crash closes it.
 
 ## FSP framing
 
@@ -288,7 +169,8 @@ pointer into the GSP/FECS image. A clean crash closes it.
 transmit length through `NV_PFSP_QUEUE_TAIL(0)`, and the response identity is
 unchecked ([the static FSP
 pass](experiments/08_assessment-and-cross-checks.md#087-static-pass-over-feat-and-fsp),
-[the FSP command surface](specs/01_boot-chain.md#fsp-command-surface)).
+[the FSP command surface](specs/01_boot-chain.md#fsp-command-surface)). The FSP
+is immutable ROM, so this is a black-box parser probe.
 
 **Try.** Vary the transmit tail distance by ±1..N; send a never-EOM fragment;
 craft a response with a mismatched task, tag, or SEID (source endpoint ID). Use
@@ -297,20 +179,87 @@ netconsole and a sacrificial card.
 **Decision.** A new error code or state is a parser surface. A clean refusal
 closes the framing.
 
-## Readout decode
+## Context patch buffer
 
-**Where it comes from.** Only bit 16 of `READOUT_0` and bits 5 and 10 of
-`READOUT_2` are decoded, and A100 reads a completely different `READOUT_0`
-([the readout decode](specs/03_register-map.md#readout-decode)). The PRO 6000
-adds `READOUT_0 = 0x00000300` and `READOUT_2 = 1`, but the bits remain
-undecoded ([the reference
+**Where it comes from.** The patch buffer is host-owned, and the post-use
+differential shows 10 changed address values in 287 entries
+([the patch
+differential](experiments/03_fecs-and-gr-context.md#035-the-post-use-patch-buffer-differential)).
+The host can edit it after the GSP fills it and before the next use.
+
+**Try.** Rewrite one of the 10 changed values to a valid and then an invalid
+framebuffer address; observe the launch, the GSP log, and any Xid (GPU error
+report).
+
+**Decision.** A context that uses the changed address is a host-controlled
+pointer into the GSP/FECS image. A clean crash closes it. A working pointer is a
+PL2 write primitive and changes what C01 and C13 can observe.
+
+## SR saved-state malleability
+
+**Where it comes from.** The saved state is encrypted, but the log only tests
+confidentiality: entropy and a scan for known constants
+([the saved
+state](experiments/06_sr-resume.md#063-the-saved-state-is-high-entropy-ciphertext)).
+It never flips a bit. The state spans the WPR through the GSP-RM heap and code,
+and the host builds the radix3
+([the host-driven
+cycle](experiments/06_sr-resume.md#061-the-suspend-and-resume-cycle-is-host-driven)).
+
+**Try.** Use [the driver harness](tools/driver-harness/) to flip one ciphertext
+bit in a zero page, a heap page, and a code page, then permute two valid
+page-table entries. Under CTR or ECB, a code flip is a controlled patch of known
+plaintext.
+
+**Decision.** A code flip that boots and executes gives PL2 execution, a
+foothold rather than the selector. A hang on every data-page flip points to
+authentication. Run this only after C01, because a descriptor bug is the
+stronger route.
+
+## Below-PLM lock
+
+**Where it comes from.** FUSE writes drop even where the page mask reads
+write-all ([the FUSE
+test](experiments/01_software-register-writes.md#014-the-fuse-shadow-and-the-inert-modifier)),
+and FECS PL2 writes drop under masks that admit L2
+([the FECS
+probe](experiments/03_fecs-and-gr-context.md#031-live-fecs-fsp-and-sec2-probes)).
+The FEAT drop is consistent with the L3 mask, but it has never been tested from
+a level the mask admits ([the PLM
+spec](specs/02_privilege-and-rate-control.md#privilege-levels-and-the-plm)).
+The PRO 6000 has the same PL3-only gate at full rate, so the gate is not the
+cap; the fuses are ([the reference
 dump](experiments/08_assessment-and-cross-checks.md#0810-an-rtx-pro-6000-reference-dump)).
 
-**Try.** Decompile the `0x3814` and `0x3828` readers from the plaintext GSP-RM
-and name every bit ([the GSP-RM tools](tools/gsp-rm-tools/)).
+**Try.** Read and write the fuse security words `0x82038c`, `0x8203f0`,
+`0x8200d0`–`0x8200fc`, and `0x820040`; read the FEAT words across the FLR
+(function-level reset) window.
 
-**Decision.** A rate or override-enable bit changes the target. Otherwise close
-it.
+**Decision.** The reads show whether a separate secure-write qualification
+exists below the PLM, one that a future PL3 exploit would also have to satisfy.
+They cannot prove sufficiency; only a passing PL3 write can. Treat a closed
+qualification as a prerequisite, not a route.
+
+## Host FECS doorbell
+
+**Where it comes from.** The FECS (graphics front-end microcode) block is
+read/write-all at `0x4096d0`, and the GSP's doorbell write landed
+([the FECS
+probe](experiments/03_fecs-and-gr-context.md#031-live-fecs-fsp-and-sec2-probes)).
+Every doorbell write was GSP-mediated; the host never wrote `0x409500` or
+`0x409504`, and the handler is encrypted
+([the command
+protocol](experiments/03_fecs-and-gr-context.md#032-the-fecs-command-protocol-statically)).
+
+**Try.** Host-write `0x409800`, `0x409500`, and `0x409504` with readback;
+replay the known-safe IDs `0x21` and `0x30`; if they execute, vary the `0x21`
+feature mask and read the bank and the issue rate. Use [register
+access](tools/register-access/) and [the issue-rate
+probe](tools/issue-rate-probe/).
+
+**Decision.** Dropped host writes close the path. Accepted writes make the
+FECS command interface a PL0 surface, and the mask sweep answers whether a
+command can select the rate.
 
 ## The 0x137200 register
 
@@ -332,7 +281,8 @@ register is not.
 payload `0x88888888` and `0x8` ([the FUSE and rate
 test](experiments/01_software-register-writes.md#014-the-fuse-shadow-and-the-inert-modifier)).
 The mask predicts a drop. The two PRO 6000s run full rate with every enable bit
-clear, so the override may be unused on Blackwell ([the reference
+clear, so the override may be unused on Blackwell
+([the reference
 dump](experiments/08_assessment-and-cross-checks.md#0810-an-rtx-pro-6000-reference-dump)).
 
 **Try.** Write `SS0 = 0x88888888` and `SS1 = 0x8` from the GSP, read back, and
@@ -340,13 +290,103 @@ restore.
 
 **Decision.** A drop closes the record. A change is the unlock.
 
+## Name the writer
+
+**Where it comes from.** The PLM re-lock is GPU-side and happens before the
+first open ([the re-lock
+test](experiments/05_fmc-fsp-boot-inputs.md#0521-plm-re-lock-is-autonomous-devinit)),
+but the "PMU" (power-management microcontroller) attribution is an inference.
+The reset mask admits both L2 and L3,
+and the FSP is equally admitted ([the reset
+window](experiments/01_software-register-writes.md#016-the-post-reset-window-closes-before-gsp-rm)).
+
+**Try.** Poll the FSP core status, scratch, engine, and PLM alongside the FEAT
+PLM across the FLR window.
+
+**Decision.** FSP activity at the re-lock names the FSP or BootROM class. No
+activity leaves the PMU or a hardware latch in play.
+
+## Per-SM channel
+
+**Where it comes from.** `GR_CTX`, `TPC`, `SM`, and `QUAD` return `0x1f` with
+every route ([the GR_CTX
+probe](experiments/01_software-register-writes.md#017-per-context-registers-need-a-caller-owned-channel)).
+The host validation checks only the offset; the rejection comes from the GSP,
+so it is a caller-identity check, not proof the space is unreachable.
+
+**Try.** Issue the typed read with `hChannelTarget` set to a live channel owned
+by the calling client; then sweep `0x504xxx` read-only and compare with the FEAT
+decode.
+
+**Decision.** A successful read makes the per-SM space live. A rejection with a
+real channel closes it. The minimum harness is a small RM client, so this costs
+more than its probability suggests.
+
+## Readout decode
+
+**Where it comes from.** Only bit 16 of `READOUT_0` and bits 5 and 10 of
+`READOUT_2` are decoded, and A100 reads a completely different `READOUT_0`
+([the readout decode](specs/03_register-map.md#readout-decode)). The PRO 6000
+adds `READOUT_0 = 0x00000300` and `READOUT_2 = 1`, but the bits remain
+undecoded ([the reference
+dump](experiments/08_assessment-and-cross-checks.md#0810-an-rtx-pro-6000-reference-dump)).
+
+**Try.** Decompile the `0x3814` and `0x3828` readers from the plaintext GSP-RM
+and name every bit ([the GSP-RM tools](tools/gsp-rm-tools/)).
+
+**Decision.** A rate or override-enable bit changes the target. Otherwise close
+it.
+
+## vBIOS app 0x23
+
+**Where it comes from.** The app `0x23` data tail is the only vBIOS artifact
+carrying the exact FEAT PLM (privilege-level mask) values, in low-entropy
+sentinel-structured data ([the devinit
+scan](experiments/05_fmc-fsp-boot-inputs.md#0522-vbios-devinit-table-scan)).
+The devinit tables and scripts are authenticated in Heavy Secure and bound to
+the device ID, so a host edit does not reach the GPU-side devinit
+([the devinit authentication](specs/05_vbios-and-devinit.md#devinit-authentication)).
+
+**Try.** Decode the data as a 4-byte-stride array against the live block maps
+([the FEAT bank](specs/03_register-map.md#feat-bank)). Map the four ucode
+app/target IDs to their loaders in the GSP-RM
+([the microcode table](specs/05_vbios-and-devinit.md#microcode-table)). This is
+an offline task; the earlier boot-edit idea is not a pre-lock template.
+
+**Decision.** A decoded write table or loader mapping opens the data tail. A
+plain configuration table closes it. Use [the vBIOS tools](tools/vbios-tools/)
+for the dump and parse.
+
+## Override payload format
+
+**Where it comes from.** The full-rate readout and fuse target is measured on
+two RTX PRO 6000s: both read `FEAT_READOUT_1 = 0` with every arithmetic speed
+fuse at 0, and card A runs BF16 at 518 TF/s with the FP16-accumulate rate equal
+([the reference
+dump](experiments/08_assessment-and-cross-checks.md#0810-an-rtx-pro-6000-reference-dump)).
+Both cards also have every `SS0`/`SS1` enable bit clear, so the full rate comes
+from the fuses, not a live override. The override payload format is a
+post-writer question: without a write that passes the PLM, no boot series can
+validate it.
+
+**Try.** Run the existing FP16-accumulate mode on the 5090 to measure its cap
+ratio locally ([the issue-rate probe](tools/issue-rate-probe/)). Get a same-card
+cold-boot series on a PRO 6000 and compare `SS0`/`SS1` movement with the 5090's
+([the FEAT-bank boot
+test](experiments/05_fmc-fsp-boot-inputs.md#0520-feat-bank-across-boots-and-flr)).
+Run the exact payload only after a PL3 writer exists.
+
+**Decision.** If a PRO boot shows an enable bit, that is the payload. Otherwise
+the words are runtime state and the payload stays unvalidated. Fold the
+cold-boot series into a future PRO rental; do not plan a run around it.
+
 ## vBIOS ucode corpus
 
 **Where it comes from.** The vBIOS carries four encrypted ucode images, the
 likely FECS/GPCCS (graphics front-end and context-switch microcode) consumer
 ([the microcode table](specs/05_vbios-and-devinit.md#microcode-table)). The FMC
-key search targeted the FMC and the SEC2 booter, not these ([the key
-search](experiments/07_plaintext-corpus.md#0710-the-fmc-key-search-comes-back-negative)).
+key search targeted the FMC and the SEC2 booter, not these
+([the key search](experiments/07_plaintext-corpus.md#0710-the-fmc-key-search-comes-back-negative)).
 
 **Try.** Map the app/target IDs to the loaders in the GSP-RM; check whether the
 bodies share the FMC key family; if they are Falcon FUC5, build a Falcon

@@ -10,12 +10,15 @@ mkdir -p "$TOOL_DIR/runs"
 #
 #   field 0  stock; clears any override
 #         1  magic              (default 0xdeadbeefdeadbeef; plumbing control)
-#         2  revision           (default 2)
+#         2  revision           (default 2; stock is 1)
 #         3  verified           (default 0xa0a0a0a0a0a0a0a0)
 #         4  fbSize             (default 0)
 #         5  frtsSize           (default 0x200000)
 #         6  gspFwHeapSize      (default 0)
 #         7  nonWprHeapSize     (default 0)
+#      8..16  bootloader description, signature, and radix3 sizes/addresses
+#        17  signature address + delta   (value required)
+#        18  radix3 address + delta      (value required)
 #
 # The value is a C integer literal (decimal or 0x...).
 #
@@ -36,13 +39,14 @@ FSP_SRC="$TREE/src/nvidia/src/kernel/gpu/fsp/arch/hopper/kern_fsp_gh100.c"
 HARNESS="$TOOL_DIR/dump_ctx.sh"
 
 case "${1:-}" in
-    0|1|2|3|4|5|6|7|8|9|10|11|12|13|14|15|16) VARY="$1" ;;
+    0|1|2|3|4|5|6|7|8|9|10|11|12|13|14|15|16|17|18) VARY="$1" ;;
     *)
-        echo "usage: sudo $0 <0..16> [value]" >&2
+        echo "usage: sudo $0 <0..18> [value]" >&2
         echo "  8 sizeOfBootloader  9 sysmemAddrOfBootloader" >&2
         echo " 10 bootloaderCodeOffset 11 DataOffset 12 ManifestOffset" >&2
         echo " 13 sysmemAddrOfSignature 14 sizeOfSignature" >&2
         echo " 15 sysmemAddrOfRadix3Elf 16 sizeOfRadix3Elf" >&2
+        echo " 17 signature address + delta 18 radix3 address + delta" >&2
         exit 2
         ;;
 esac
@@ -62,6 +66,9 @@ if [ -z "$VALUE" ]; then
         14) VALUE=0x100000 ;;              # oversized signature
         15) VALUE=0x0 ;;                   # invalid ELF address
         16) VALUE=0x100000 ;;              # oversized ELF
+        17|18)
+            echo "field $VARY needs an explicit delta" >&2
+            exit 2 ;;
         *) VALUE=0 ;;
     esac
 fi
