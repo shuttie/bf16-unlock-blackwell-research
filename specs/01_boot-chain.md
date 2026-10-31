@@ -72,8 +72,7 @@ no Booter ucode, and no FWSEC-FRTS stage"
 public description of the Peregrine separation kernel and Boot ROM says both are
 formally verified in Ada SPARK
 ([AdaCore](https://www.adacore.com/blog/proving-safety-at-scale-spark-risc-v-and-nvidias-security-strategy)).
-That is why the absent GB20x SEC2 booter is a boot-chain change, not a missing
-probe.
+The absent GB20x SEC2 booter follows from the boot-chain change.
 
 ## What the host sends
 

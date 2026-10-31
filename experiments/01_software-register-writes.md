@@ -708,15 +708,15 @@ attempt at `0x137200` with `0xbadf5128`
 **Result.**
 
 - **Answer:** the debugger class reads the bank and the write is dropped. It is
-  a read-only observability path, not a FEAT writer.
+  a read-only observability path; the FEAT write does not land.
 - **What we learned:**
   - The debug class resolves the same bank and returns the stock values, so it
     is a fourth read path alongside BAR0, the GSP, and the driver's cached getter.
   - A benign FEAT write returns the success path and the PLM drops it, exactly
     like [the host and GSP writes](#012-speed-register-write-from-gsp-is-dropped).
     The gate sits below the debug class.
-  - The write was to `FEAT_OVR_QUADRO`, not `SS0`; the result applies to the
-    bank, not to the selector alone.
+  - The write targeted `FEAT_OVR_QUADRO`; the result applies to the bank rather
+    than the selector alone.
   - `0x137200` is a privilege-protected FECS/GR register, not a FEAT word. That
     closes the free lead the FECS log record raised.
 - **Related:**

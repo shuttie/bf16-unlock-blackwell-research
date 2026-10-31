@@ -142,6 +142,9 @@ Three things changed, and together they close the old route:
    ships](experiments/07_plaintext-corpus.md#071-pl3-components-in-the-driver-package),
    and the leaked test key [does not reproduce on
    GB202](experiments/07_plaintext-corpus.md#075-the-ga100-test-key-does-not-fit).
+   The Linux kernel's nova-core documentation confirms there is no SEC2
+   involvement, no Booter ucode, and no FWSEC-FRTS stage on Hopper/Blackwell
+   ([FSP and Secure Boot](https://docs.kernel.org/gpu/nova/core/fsp.html)).
 2. **The FEAT bank is [final before the FMC
    runs](experiments/05_fmc-fsp-boot-inputs.md#0517-feat-bank-final-before-the-fmc).**
    A GPU-side devinit (an initialization routine that runs before the driver)
@@ -197,8 +200,8 @@ leads](IDEAS.md). The short version: the FEAT readout and fuse target is
 validated ([the reference
 dump](experiments/08_assessment-and-cross-checks.md#0810-an-rtx-pro-6000-reference-dump));
 the `SS0`/`SS1` override format is still open. The public record reproduces the
-drop on GB202 and GB203M and names the missing primitive: PL3 code execution in
-the security firmware, not a better register write ([the external
+drop on GB202 and GB203M and names the missing primitive as PL3 code execution
+in the security firmware ([the external
 cross-check](experiments/08_assessment-and-cross-checks.md#0811-the-register-route-is-a-pl3-problem)).
 The cold-boot FMC parser map is measured ([the parser
 group](experiments/09_fmc-cold-boot-parsers.md)): the boot inputs are bounded or

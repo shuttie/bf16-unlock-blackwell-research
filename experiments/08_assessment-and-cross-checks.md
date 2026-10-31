@@ -785,7 +785,10 @@ copied to `+0xa8..+0xe0` are `0x3b9e`, `0x0493`, `0x2cfb`, `0xd7e6`, `0xabf8`,
   - [The decoder](#086-gsp-log-decoding-without-the-metadata-elf) supplies the
     attribution table.
 - **Open question:** why the GSP hits PRI refusals at PL2 during boot is not
-  identified; the records show the refusals, not their cause.
+  identified; the records show the refusals, not their cause. The `0x137200`
+  target is a privilege-protected FECS/GR register (`0xc120048a` in a
+  `0x30`-stride table), not FEAT ([the debugger
+  test](../experiments/01_software-register-writes.md#018-the-debugger-class-reads-the-bank-but-cannot-write-it)).
 
 ## 08.10 An RTX PRO 6000 reference dump
 
@@ -934,13 +937,13 @@ reached the selector, and what primitive is missing?
   - the Ampere fuse survey and the ai.rs 5090 write-up.
 - Compare the prior-art chain with the local boot-chain and register results.
 
-**Observed data.** The prior art ends in a host write, but the write is not the
-primitive. The 3090/4090 route runs code in the signed SEC2 booter: a
-host-controlled signature length overflows the booter's stack, the payload opens
-the PLMs, and only then does the host write `SS0`/`SS1` before an FLR. The CMP
-170HX paper calls the root enabler "arbitrary code execution in the GPU's Heavy
-Secure (HS) Falcon mode" and the compute cap "firmware-gated," not
-silicon-removed
+**Observed data.** The prior art ends in a host write, but the primitive is the
+code execution that precedes it. The 3090/4090 route runs code in the signed
+SEC2 booter: a host-controlled signature length overflows the booter's stack,
+the payload opens the PLMs, and only then does the host write `SS0`/`SS1` before
+an FLR. The CMP 170HX paper calls the root enabler "arbitrary code execution in
+the GPU's Heavy Secure (HS) Falcon mode" and the compute cap "firmware-gated,"
+not silicon-removed
 ([A Canary in the Crypto Mine](https://doi.org/10.5281/zenodo.20916111)).
 
 Public probes and the prior-art projects show the same wall:
@@ -985,26 +988,27 @@ runs did not read those words.
 
 The target is also not settled. The PRO 6000's full rate is all-zero fuses with
 every `SS0`/`SS1` enable bit clear
-([the reference dump](#0810-an-rtx-pro-6000-reference-dump)), so the full-rate
-state is the absence of a fuse penalty, not an active override. `fmla32=3` comes
-with a ~2× penalty, not the public enum's 1/8, and the community's naive
+([the reference dump](#0810-an-rtx-pro-6000-reference-dump)), so full rate comes
+from the absence of a fuse penalty rather than an active override. `fmla32=3`
+comes with a ~2× penalty, not the public enum's 1/8, and the community's naive
 `FEAT_READOUT_1` decode produces out-of-range values. `SS0=0x88888888` and
-`SS1=0x8` are inherited from Ada, not validated on GB202.
+`SS1=0x8` are inherited from Ada and unvalidated on GB202.
 
 **Result.**
 
 - **Answer:** the negative result is structural. The older unlocks are PL3
   code-execution exploits, and Blackwell replaced the component that carried the
   exploit with the FSP/FMC chain. The missing primitive is code execution in a
-  signed PL3 image, not a better register write.
+  signed PL3 image.
 - **What we learned:**
   - The FEAT write drop is reproduced on two Blackwell parts before any driver
-    binds, so it is hardware or GPU-firmware behavior, not the host stack.
+    binds, so the host stack is not involved.
   - The PLM decode has a public field definition: the Falcon v4 header defines
     the same write field and the level-3-only constant.
-  - The prior art needs a plaintext or a bug in the signed boot firmware. GB20x
-    publishes no SEC2 booter, and the FMC is signed, encrypted, and
-    authenticated; the local 16! key search is negative
+  - The prior art needs a way into the signed boot firmware: a plaintext image
+    to mine, or a bug in a running image. NVIDIA publishes no SEC2 booter for
+    GB20x, and the FMC is signed, encrypted, and authenticated; the local 16!
+    key search is negative
     ([the key search](../experiments/07_plaintext-corpus.md#0710-the-fmc-key-search-comes-back-negative)).
   - Two local gaps remain: the override-enable fuses are unread on GB202, and
     the Blackwell selector payload and readout law are unproven.

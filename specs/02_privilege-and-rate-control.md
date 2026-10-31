@@ -18,7 +18,8 @@
   6000 runs both at the same rate.
 - The limit is a fuse-programmed speed selector, not a missing execution unit.
 - The FEAT bank's write mask is PL3-only at stock. PL0 is the host, PL2 is
-  GSP-RM, PL3 is boot firmware; host and GSP-RM writes are dropped silently.
+  GSP-RM, PL3 is boot firmware; host, GSP-RM, and CUDA debugger writes are
+  dropped silently.
 - The selector chain is fuse -> `SS0`/`SS1` -> FECS/GPCCS -> SM issue rate. A
   PCI function-level reset (FLR) opens a PL2-write window briefly, but it closes
   before GSP-RM starts.

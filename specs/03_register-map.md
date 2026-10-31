@@ -578,9 +578,9 @@ The error-code taxonomy is in
 - Values are stock on GB202 unless marked otherwise. Per-card values are from
   `41:00.0` and `c1:00.0`; per-boot values are from the sampled cold boots. The
   PRO 6000 values are measured on two cards, one power-on each.
-- The FEAT block is not documented in the public headers. The low byte matches
-  the Falcon v4 PLM layout; the field names above it are analogy, not a
-  FEAT-specific definition.
+- The FEAT block is not documented in the public headers. The field layout
+  matches the Falcon v4 PLM header; the FEAT block's use of that layout is an
+  analogy, not a FEAT-specific definition.
 - The zero endpoint of the readout→rate mapping is measured on two PRO 6000s:
   all-zero selectors with all-zero fuses and full rate. The nonzero values are
   still unproven: `FMLA32 = 3` yet the measured penalty is about 2×, not the
