@@ -1,72 +1,73 @@
-# Software register writes
+# Writing the speed registers from software
 
-Can the host or GSP-RM write the rate registers, and does a success status mean the
-write landed? These seven experiments were run on 2026-10-25 to 2026-10-28. Each
-record keeps the original hypothesis, method, and result; the observed data is
-copied from the run output.
+The [4090](https://github.com/JustAResearcher/gpu-unlock-ada) and
+[3090](https://github.com/Zagitta/gpu-unlock) unlocks write two override words in
+the GPU's rate-control bank, then reset the card. I tried the same writes on the
+5090 without the reset, from the host CPU at
+[PL0](../specs/02_privilege-and-rate-control.md) and from
+[GSP-RM](../specs/01_boot-chain.md), the GPU's main firmware, at
+[PL2](../specs/02_privilege-and-rate-control.md). The register-op control accepted
+the write and returned success on a healthy GSP. The registers did not change. The
+bank's [permission mask](../specs/02_privilege-and-rate-control.md) admits writes
+from [PL3](../specs/02_privilege-and-rate-control.md) only, the level where
+NVIDIA's boot firmware runs.
 
-## Setup
+The old route reaches [`SS0`/`SS1`](../specs/03_register-map.md) from a boot image
+at PL3. This group asks whether anything already running at PL0 or PL2 can do the
+same.
 
-Hardware: 2× RTX 5090 (GB202, `10de:2b85`), 575 W, Linux, CUDA 13, driver and
-GSP-RM 595.91.07. `deviceId 1` is `41:00.0`; `deviceId 0` is `c1:00.0`.
+## Summary
 
-Tools:
+These seven experiments asked whether the host (`PL0`) or GSP-RM (`PL2`) can
+write the rate-control registers, and whether success status means the write
+landed. They ran on the [two-card test rig](../README.md).
 
-- [Register access](../tools/register-access/) — userspace RM client and shell probes.
-- [Issue-rate probe](../tools/issue-rate-probe/) — register-resident tensor rate probe.
-- [Driver harness](../tools/driver-harness/) — FLR/rebind window and CUDA-context probes.
+The instrument was [`NV2080_CTRL_CMD_GPU_EXEC_REG_OPS`](../tools/register-access/)
+(`0x20800122`), NVIDIA's exported register-op control. A root client names a
+[BAR0](../specs/07_memory-and-host-access.md) offset, and GSP-RM performs the
+access at PL2.
 
-Build `regops` once from the repo root:
+The transport works. Every register in the
+[FEAT bank](../specs/03_register-map.md) has the same write gate, and accepted
+writes read back unchanged. The FUSE shadow, the rate modifier, the post-reset
+window, and the per-context register types do not move the selector.
 
-```bash
-gcc -O2 -Wall -o tools/register-access/regops tools/register-access/regops.c
-```
+## Experiments
 
-Inputs: a live card with the 595.91.07 driver. The static checks read the installed
-`nvidia.ko` (decompress the package's `.ko.zst`) and the GSP-RM `.fwimage` (extract
-it from `/lib/firmware/nvidia/595.91.07/gsp_ga10x.bin`; the
-[GSP-RM tools](../tools/gsp-rm-tools/) README has the extraction command). No
-firmware is redistributed.
+| ID | Experiment | Result |
+|---|---|---|
+| [01.1](#011-first-register-write-hits-a-crashed-gsp) | First register write hits a crashed GSP | Write untested; GSP already fatal |
+| [01.2](#012-speed-register-write-from-gsp-is-dropped) | Speed-register write from GSP is dropped | Success returned; value unchanged |
+| [01.3](#013-the-whole-feat-bank-shares-one-gate) | The whole FEAT bank shares one gate | No ungated register in bank |
+| [01.4](#014-the-fuse-shadow-and-the-inert-modifier) | The fuse shadow and the inert modifier | Fuse locked; rate modifier inert |
+| [01.5](#015-the-permission-mask-admits-pl3-writes-only) | The permission mask admits PL3 writes only | Write gate is PL3-only |
+| [01.6](#016-the-post-reset-window-closes-before-gsp-rm) | The post-reset window closes before GSP-RM | Window ends before GSP-RM exists |
+| [01.7](#017-per-context-registers-need-a-caller-owned-channel) | Per-context registers need a caller-owned channel | Context route closed at PL0 |
 
-Boot state and cost: boot clean (`uptime` about a minute, no Xid, both GSPs at
-595.91.07) and run as root. A wedged register test needs a forced reboot. Do not
-page-scan BAR0 `0x300000`–`0x400000` while the driver owns the card.
+## 01.1 First register write hits a crashed GSP
 
-Terms:
+**Hypothesis.** A write issued by GSP-RM through
+[`NV2080_CTRL_CMD_GPU_EXEC_REG_OPS`](../tools/register-access/) can reach
+[`FEAT_OVR_SM_SS0`](../specs/03_register-map.md) and stick. The
+[4090 unlock](https://github.com/JustAResearcher/gpu-unlock-ada) writes the same
+word from a PL3 boot image; this run asked whether PL2 firmware could do it from
+userspace.
 
-- **PL0 / PL2 / PL3** — host, GSP-RM, and boot-firmware privilege levels. See
-  [privilege and rate control](../specs/02_privilege-and-rate-control.md).
-- **PLM** — per-block read/write permission mask. Same spec.
-- **FEAT bank / SS0 / SS1** — the rate override registers. See
-  [register map](../specs/03_register-map.md).
-- **FLR** — PCI function-level reset. See [boot chain](../specs/01_boot-chain.md).
-- **BAR0** — the card's MMIO window. See
-  [memory and host access](../specs/07_memory-and-host-access.md).
-- **GSP-RM** — the main GPU firmware, runs at PL2. See
-  [boot chain](../specs/01_boot-chain.md).
-
-## E07 · `GPU_EXEC_REG_OPS` first attempt — invalidated
-
-*2026-10-25 · status: INCONCLUSIVE (superseded by [E08](../experiments/01_software-register-writes.md))*
-
-**Hypothesis.** A GSP-executed write can reach `FEAT_OVR_SM_SS0` and stick.
-
-**Instrument.** `regops` from [register access](../tools/register-access/), a
-userspace RM client on `/dev/nvidiactl`; target `deviceId 0` = `c1:00.0`, which was
-already fatal. Baseline reads came from a direct BAR0 mmap on `41:00.0`.
-
-**Method.** Allocate an RM client (`0x41`), device (`0x80` with `deviceId`), and
-subdevice (`0x2080`), then issue `NV_ESC_RM_CONTROL 0x20800122`. `hRoot` must be the
-client handle for child allocations; the device allocation needs
-`NV_ESC_REGISTER_FD` on `/dev/nvidiaN` first. The control's `read` mode issues
-eight `READ_32` ops; `rate` calls `0x20801230`; `name` calls `0x20800110`.
+**Method.** `regops` from [register access](../tools/register-access/) is a
+userspace client for the register-op control. I ran it as root, first against
+`deviceId 0` (`c1:00.0`), which was already fatal, then against `deviceId 1`
+(`41:00.0`). The client allocates an RM client, device, and subdevice, then issues
+`NV_ESC_RM_CONTROL 0x20800122`; the tool README has the details. The `read` mode
+sends eight `READ_32` ops, `rate` calls the issue-rate getter (`0x20801230`), and
+`name` calls `0x20800110`. I ran the same modes on `deviceId 1` with:
 
 ```bash
 sudo tools/register-access/regops 1 0000:41:00.0 read
 sudo tools/register-access/regops 1 0000:41:00.0 rate
 ```
 
-**Observed data.** Baseline from the direct BAR0 read on `41:00.0`:
+**Observed data.** Baseline from the direct BAR0 read on `41:00.0`
+([register map](../specs/03_register-map.md) has the field names):
 
 ```text
 PLM             0xfffffb8f
@@ -83,48 +84,75 @@ The control result:
 ```text
 NV_ESC_RM_CONTROL 0x20800122 -> 0x62 (NV_ERR_RESET_REQUIRED)
 parameterless getter         -> NV_OK
-GET_NAME_STRING              -> 0x1F
+GET_NAME_STRING              -> 0x1F (NV_ERR_INVALID_ARGUMENT)
 ```
 
 `dmesg -T` showed both GSPs had crashed 36 minutes earlier:
 
+| Time | GPU | Sequence |
+|---|---|---|
+| 16:13:40 | `41:00.0` | Xid 13 -> Xid 120 -> Xid 154 |
+| 16:13:47 | `c1:00.0` | same sequence, 7 s later |
+
 ```text
-16:13:40  41:00.0  Xid 13 -> Xid 120 -> Xid 154
-16:13:47  c1:00.0  same sequence, 7 s later
 Xid 120: GSP task exception: load access page fault (cause:0xd) @ pc:0x1368618,
          partition:4#0, stval=0x250
 ```
 
-**Result.** The control returned `0x62` on every invocation, with no per-op status.
-A parameterless getter on the same client returned `NV_OK`. The GSP was already
-fatal, so the write question was not tested.
+**Result.** The control returned `0x62` on every invocation and no per-op status.
+`0x62` is `NV_ERR_RESET_REQUIRED`, which `_kgspRpcSanityCheck` returns for every
+RPC once the GSP is fatal, so it says nothing about the requested write
+([errors and logging](../specs/08_errors-and-logging.md)). The parameterless
+getter still returned `NV_OK` because the host driver caches the nine selectors
+at GR init and serves the getter from that cache
+([privilege and rate control](../specs/02_privilege-and-rate-control.md)).
+`GET_NAME_STRING` returned `0x1F` (`NV_ERR_INVALID_ARGUMENT`), a normal argument
+error rather than a reset error, so the RM still answered host-side controls.
+
+The GSP was already fatal, so this run did not test whether a GSP-executed write
+can land.
 
 **Reproduce.**
-1. Boot the machine and run the two commands above.
-2. A clean machine returns `NV_OK` and the register values; a fatal GSP returns
-   `0x62` and Xid 120/154 in `dmesg -T`.
-3. Retry on `deviceId 1` (`41:00.0`) after a reboot. A clean run is
-   [E08](../experiments/01_software-register-writes.md).
+1. Build `regops` from the repo root:
+   `gcc -O2 -Wall -o tools/register-access/regops tools/register-access/regops.c`.
+2. On a boot with a fatal GSP (`Xid 120` in `dmesg -T`), run the two commands
+   above.
+3. Expect `0x62` from the register-op control and `NV_OK` from the parameterless
+   getter.
+4. On a clean boot the same commands return the register values; that run is
+   [01.2](#012-speed-register-write-from-gsp-is-dropped).
 
 **Limits.** This run is invalid as a write test. It shows the failure mode of an
-RPC to a fatal GSP, not whether a GSP-executed write can land. The link to the BAR0
-page scan is circumstantial. Recovery needed a forced reboot
-(`systemctl reboot -f`, or SysRq-B); `nvidia-smi -r` is not supported on GeForce,
-and writing the PCI `remove` node can spin.
+RPC to a fatal GSP, not whether a GSP-executed write can land. The BAR0 page scan
+`0x300000`–`0x400000` ran in the same window; causation with the crash is not
+established, because `c1:00.0` faulted 7 s later at the same PC. Treat the
+aperture as a hazard anyway
+([memory and host access](../specs/07_memory-and-host-access.md)), which also has
+the recovery note. The clean rerun
+[01.2](#012-speed-register-write-from-gsp-is-dropped) supplies the
+negative/positive control pair this run lacks.
 
-## E08 · `GPU_EXEC_REG_OPS` second attempt — the write is dropped
+## 01.2 Speed-register write from GSP is dropped
 
-*2026-10-25 · status: CLOSED-MEASURED*
+**Hypothesis.** A GSP-RM write to [`FEAT_OVR_SM_SS0`](../specs/03_register-map.md)
+can stick when the GSP is healthy. The
+[4090 unlock](https://github.com/JustAResearcher/gpu-unlock-ada) writes
+`SS0 = 0x88888888`; this test wrote 0, which is enough to see whether the write
+lands.
 
-**Hypothesis.** A GSP-executed write to `FEAT_OVR_SM_SS0` can stick when the GSP is
-healthy.
+**Method.** `regops` from [register access](../tools/register-access/), run as root
+against `deviceId 1` (`41:00.0`) on a clean boot. Four modes ran in order:
 
-**Instrument.** `regops` from [register access](../tools/register-access/); target
-`deviceId 1` = `41:00.0`, root.
+- `one` reads [`PMC_BOOT_0`](../specs/03_register-map.md) as a connectivity check.
+- `read` sends eight `READ_32` ops over the FEAT and FUSE windows.
+- `wr 82381c 0` writes `FEAT_OVR_SM_SS0` (offset `0x82381c`) with `WRITE_32` and
+  `regAndNMask = ~value`, then reads it back.
+- `sc` writes a PBUS scratch register that the host also writes at PL0, reads it
+  back, and restores it in the same RPC batch.
 
-**Method.** After a clean reboot, run four modes: `one` (benign `PMC_BOOT_0`),
-`read` (eight `READ_32`), `wr 82381c 0` (`WRITE_32` with `regAndNMask = ~value`,
-then `READ_32`), and `sc` (scratch dump plus a positive control).
+The register-op write is a read-modify-write:
+`new = (read32(bar0 + offset) & ~regAndNMaskLo) | regValueLo`. To force an exact
+value `V`, set `regValue = V` and `regAndNMask = ~V`.
 
 ```bash
 sudo tools/register-access/regops 1 0000:41:00.0 one
@@ -133,7 +161,7 @@ sudo tools/register-access/regops 1 0000:41:00.0 wr 82381c 0
 sudo tools/register-access/regops 1 0000:41:00.0 sc
 ```
 
-**Observed data.** Captured console output, reformatted from the run notes:
+**Observed data.** Captured console output:
 
 ```text
 one                SUCCESS   PMC_BOOT_0=0x1b2000a1 (matches BAR0)
@@ -142,20 +170,36 @@ wr 82381c 0        SUCCESS; readback=0x21240001; host BAR0=0x21240001
 sc  SCRATCH[15]    0x143c: 0x5A5AA5A5 -> 0x5A5AA5A5; 0 -> 0
 ```
 
-**Result.** The path works and the FEAT write is silently dropped by
-`FEAT_OVR_PLM`. Success status cannot distinguish applied from dropped. This is the
-negative/positive control pair reused by every later register claim.
+The scratch line means the register accepted `0x5A5AA5A5` and read back
+`0x5A5AA5A5`, then accepted `0` and read back `0`. The FEAT write returned success
+and the register did not move.
+
+**Result.** The path works. The scratch register changes and restores, the GSP's
+reads match the host's BAR0 reads, and both writes return success. The FEAT write is
+dropped by [`FEAT_OVR_PLM`](../specs/02_privilege-and-rate-control.md), and the
+drop is silent.
+[01.5](#015-the-permission-mask-admits-pl3-writes-only) decodes the mask.
+[`regStatus = SUCCESS`](../specs/08_errors-and-logging.md) cannot distinguish
+"applied" from "dropped"; only the readback can.
+
+This is the negative/positive control pair every later register claim uses. A
+dropped FEAT write sits next to a scratch write that lands.
 
 **Reproduce.**
-1. Boot clean (`uptime` about a minute, no Xid, both GSPs at 595.91.07).
-2. Build: `gcc -O2 -Wall -o tools/register-access/regops tools/register-access/regops.c`.
-3. Run the four commands in order from the repo root.
-4. Expect the FEAT write to report `SUCCESS` while `0x82381c` reads back
-   `0x21240001`; the scratch control must change and restore.
+1. Boot clean.
+2. Build from the repo root:
+   `gcc -O2 -Wall -o tools/register-access/regops tools/register-access/regops.c`.
+3. Run the four commands in order.
+4. Expect `SUCCESS` from the FEAT write while `0x82381c` reads back `0x21240001`,
+   and the scratch register to change and restore.
 
 **Limits.** Success status does not mean the write landed; the readback is the
-evidence. This shows the FEAT bank drops a PL2 write. The gate is decoded in
-[E53](../experiments/01_software-register-writes.md).
+evidence. The value written was 0, not the `0x88888888` payload the 4090 unlock
+writes, and `SS0 = 0` leaves every enable bit clear, so this run does not show what
+a non-zero value would do. It does show that the write did not change the
+register. The bank's gate is decoded
+in [01.5](#015-the-permission-mask-admits-pl3-writes-only); the rest of the bank
+is [01.3](#013-the-whole-feat-bank-shares-one-gate).
 
 ## E09 · The FEAT bank map and its write gate
 

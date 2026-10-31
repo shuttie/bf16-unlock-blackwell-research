@@ -1,0 +1,59 @@
+{
+  "source": "$DECOMPILED",
+  "image": "$FWIMAGE",
+  "modules": "$MODULES",
+  "out": "id_table.csv",
+  "rows": 63612,
+  "raw_rows": 33044,
+  "writers": {
+    "FUN_ram_01179c62": {
+      "task_class": "EARLY",
+      "base": "0x20178000",
+      "decompiled_rows": 42,
+      "raw_rows": 34,
+      "rows": 76,
+      "distinct_ids": 75,
+      "recovered_n": 0,
+      "n_args_min": 0,
+      "n_args_max": 6,
+      "id_min": "0x201795c0",
+      "id_max": "0x20179cb0"
+    },
+    "FUN_ram_011849a6": {
+      "task_class": "INIT",
+      "base": "0x20183000",
+      "decompiled_rows": 75,
+      "raw_rows": 109,
+      "rows": 184,
+      "distinct_ids": 184,
+      "recovered_n": 1,
+      "n_args_min": 0,
+      "n_args_max": 8,
+      "id_min": "0x20186e00",
+      "id_max": "0x20188180"
+    },
+    "FUN_ram_01b9e86e": {
+      "task_class": "RM",
+      "base": "0x2018f000",
+      "decompiled_rows": 30451,
+      "raw_rows": 32901,
+      "rows": 63352,
+      "distinct_ids": 58736,
+      "recovered_n": 40,
+      "n_args_min": 0,
+      "n_args_max": 17,
+      "id_min": "0x203b8ac0",
+      "id_max": "0x205217b8"
+    }
+  },
+  "dynamic_metadata_calls": {
+    "FUN_ram_01179c62": 6,
+    "FUN_ram_011849a6": 10,
+    "FUN_ram_01b9e86e": 2910
+  },
+  "rejected": {
+    "short": 52,
+    "id_out_of_range": 228,
+    "definition_or_bad_n": 1
+  }
+}

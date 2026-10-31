@@ -1,0 +1,131 @@
+diff --git a/src/nvidia/src/kernel/gpu/fsp/arch/hopper/kern_fsp_gh100.c b/src/nvidia/src/kernel/gpu/fsp/arch/hopper/kern_fsp_gh100.c
+index b5167e3f..23070a6f 100644
+--- a/src/nvidia/src/kernel/gpu/fsp/arch/hopper/kern_fsp_gh100.c
++++ b/src/nvidia/src/kernel/gpu/fsp/arch/hopper/kern_fsp_gh100.c
+@@ -57,6 +57,22 @@
+ // Blocks are 64 DWORDS
+ #define DWORDS_PER_EMEM_BLOCK 64U
+ 
++/*
++ * BF16 research: one-field COT override for the FMC parser oracle.
++ * Default 0 = stock (no change).  A build-time variant is applied only when
++ * explicitly enabled; the applied value is printed before the COT is sent.
++ *
++ *   1 = frtsVidmemSize           4 = gspFmcSysmemOffset
++ *   2 = frtsVidmemOffset         5 = hash384[0] (signature-check control)
++ *   3 = gspBootArgsSysmemOffset
++ */
++#ifndef BF16_COT_VARY
++#define BF16_COT_VARY 0
++#endif
++#ifndef BF16_COT_VALUE
++#define BF16_COT_VALUE 0ULL
++#endif
++
+ static void _kfspUpdateQueueHeadTail_GH100(OBJGPU *pGpu, KernelFsp *pKernelFsp,
+     NvU32 queueHead, NvU32 queueTail);
+ 
+@@ -1548,6 +1564,61 @@ kfspSendBootCommands_GH100
+     // Reset the GSP-FMC error code register to prevent reporting stale data
+     kfspResetGspFmcErrorCode_HAL(pGpu, pKernelFsp);
+ 
++#if BF16_COT_VARY != 0
++    /* BF16 research: change exactly one host-controlled COT field. */
++    switch (BF16_COT_VARY)
++    {
++        case 1:
++            pKernelFsp->pCotPayload->frtsVidmemSize = (NvU32)BF16_COT_VALUE;
++            break;
++        case 2:
++            pKernelFsp->pCotPayload->frtsVidmemOffset = (NvU64)BF16_COT_VALUE;
++            break;
++        case 3:
++            pKernelFsp->pCotPayload->gspBootArgsSysmemOffset = (NvU64)BF16_COT_VALUE;
++            break;
++        case 4:
++            pKernelFsp->pCotPayload->gspFmcSysmemOffset = (NvU64)BF16_COT_VALUE;
++            break;
++        case 5:
++            pKernelFsp->pCotPayload->hash384[0] ^= (NvU32)BF16_COT_VALUE;
++            break;
++        default:
++            break;
++    }
++    NV_PRINTF(LEVEL_ERROR, "BF16: COT VARY field=%d value=0x%llx applied\n",
++              (int)BF16_COT_VARY, (NvU64)BF16_COT_VALUE);
++#endif
++
++    /* BF16 research instrumentation: the host-built COT payload, before it is sent. */
++    NV_PRINTF(LEVEL_ERROR,
++              "BF16: COT version=%x size=%x fmc=0x%llx "
++              "frtsSys{off=0x%llx size=0x%x} frtsVid{off=0x%llx size=0x%x} "
++              "bootArgs=0x%llx\n",
++              (NvU32)pKernelFsp->pCotPayload->version,
++              (NvU32)pKernelFsp->pCotPayload->size,
++              pKernelFsp->pCotPayload->gspFmcSysmemOffset,
++              pKernelFsp->pCotPayload->frtsSysmemOffset,
++              pKernelFsp->pCotPayload->frtsSysmemSize,
++              pKernelFsp->pCotPayload->frtsVidmemOffset,
++              pKernelFsp->pCotPayload->frtsVidmemSize,
++              pKernelFsp->pCotPayload->gspBootArgsSysmemOffset);
++    NV_PRINTF(LEVEL_ERROR,
++              "BF16: COT hash=%08x%08x%08x%08x key=%08x%08x%08x%08x "
++              "sig=%08x%08x%08x%08x\n",
++              pKernelFsp->pCotPayload->hash384[0],
++              pKernelFsp->pCotPayload->hash384[1],
++              pKernelFsp->pCotPayload->hash384[2],
++              pKernelFsp->pCotPayload->hash384[3],
++              pKernelFsp->pCotPayload->publicKey[0],
++              pKernelFsp->pCotPayload->publicKey[1],
++              pKernelFsp->pCotPayload->publicKey[2],
++              pKernelFsp->pCotPayload->publicKey[3],
++              pKernelFsp->pCotPayload->signature[0],
++              pKernelFsp->pCotPayload->signature[1],
++              pKernelFsp->pCotPayload->signature[2],
++              pKernelFsp->pCotPayload->signature[3]);
++
+     status = kfspSendAndReadMessage(pGpu, pKernelFsp, (NvU8 *)pKernelFsp->pCotPayload,
+                                     sizeof(NVDM_PAYLOAD_COT), NVDM_TYPE_COT, NULL, 0);
+     if (status != NV_OK)
+diff --git a/src/nvidia/src/kernel/gpu/gsp/arch/hopper/kernel_gsp_gh100.c b/src/nvidia/src/kernel/gpu/gsp/arch/hopper/kernel_gsp_gh100.c
+index a5541cde..89087a22 100644
+--- a/src/nvidia/src/kernel/gpu/gsp/arch/hopper/kernel_gsp_gh100.c
++++ b/src/nvidia/src/kernel/gpu/gsp/arch/hopper/kernel_gsp_gh100.c
+@@ -467,6 +467,37 @@ kgspSetupGspFmcArgs_GH100
+     pGspFmcBootParams->gspRmParams.bootArgsOffset = memdescGetPhysAddr(pKernelGsp->pLibosInitArgumentsDescriptor, AT_GPU, 0);
+     pGspFmcBootParams->gspRmParams.target = _kgspMemdescToDmaTarget(pKernelGsp->pLibosInitArgumentsDescriptor);
+ 
++    NV_PRINTF(LEVEL_ERROR,
++              "BF16: FMC boot params: regkeys=0x%x bootGspRm{desc=0x%llx size=0x%x target=%u bBoot=%u} gspRm{bootArgs=0x%llx target=%u}\n",
++              pGspFmcBootParams->initParams.regkeys,
++              pGspFmcBootParams->bootGspRmParams.gspRmDescOffset,
++              pGspFmcBootParams->bootGspRmParams.gspRmDescSize,
++              pGspFmcBootParams->bootGspRmParams.target,
++              pGspFmcBootParams->bootGspRmParams.bIsGspRmBoot,
++              pGspFmcBootParams->gspRmParams.bootArgsOffset,
++              pGspFmcBootParams->gspRmParams.target);
++
++    /* BF16 research instrumentation: what the FMC actually parses at cold boot. */
++    if (pKernelGsp->pWprMeta != NULL)
++    {
++        GspFwWprMeta *pWprMeta = pKernelGsp->pWprMeta;
++
++        NV_PRINTF(LEVEL_ERROR,
++                  "BF16: WprMeta magic=0x%llx rev=%llu flags=0x%x bootCount=%llu\n",
++                  pWprMeta->magic, pWprMeta->revision,
++                  (NvU32)pWprMeta->flags, pWprMeta->bootCount);
++        NV_PRINTF(LEVEL_ERROR,
++                  "BF16: WprMeta radix3Elf{addr=0x%llx size=%llu} "
++                  "bootloader{addr=0x%llx size=%llu} "
++                  "gspFw{start=0x%llx heapOff=0x%llx heapSize=0x%llx} "
++                  "frts{off=0x%llx size=0x%llx} wprEnd=0x%llx fbSize=0x%llx\n",
++                  pWprMeta->sysmemAddrOfRadix3Elf, pWprMeta->sizeOfRadix3Elf,
++                  pWprMeta->sysmemAddrOfBootloader, pWprMeta->sizeOfBootloader,
++                  pWprMeta->gspFwWprStart, pWprMeta->gspFwHeapOffset,
++                  pWprMeta->gspFwHeapSize, pWprMeta->frtsOffset,
++                  pWprMeta->frtsSize, pWprMeta->gspFwWprEnd, pWprMeta->fbSize);
++    }
++
+     Spdm *pSpdm = GPU_GET_SPDM(pGpu);
+ 
+     if (pSpdm != NULL && pSpdm->getProperty(pSpdm, PDB_PROP_SPDM_ENABLED))

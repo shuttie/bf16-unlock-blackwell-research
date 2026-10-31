@@ -1,0 +1,24 @@
+# Firmware, driver binaries, and build products
+*.bin
+*.ko
+*.ko.zst
+*.zst
+*.o
+*.so
+*.cubin
+*.ptx
+*.rep
+*.gpr
+*.pyc
+__pycache__/
+
+# Private keys and generated key material
+*.pem
+*.key
+tools/driver-harness/cotkey/
+
+# Runtime outputs and local inputs
+tools/*/runs/
+tools/*/out/
+tools/fmc-tools/containers/
+tools/fmc-tools/selftest_tmp/

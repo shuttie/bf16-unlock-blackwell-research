@@ -246,11 +246,12 @@ tools that need images expect you to extract them from your own driver package.
 This is a research log. There is no working exploit or unlock in it. I am not
 affiliated with NVIDIA.
 
-The text is CC BY 4.0. The tool source is MIT.
+The text is CC BY 4.0. Tool source is MIT, except `tools/issue-rate-probe/` and
+`tools/fmc-tools/`, which are GPL-2.0-only. See [LICENSE](LICENSE).
 
 If you own an RTX PRO 6000, I would like one thing: a dump of the FEAT readout
 (`FEAT_READOUT_1`), the two selector words (`SS0`/`SS1`), and the fuse block. That
 is the one external measurement that would change the plan.
 
-Corrections are welcome. Point me at an experiment record or a command that
-reproduces the problem.
+Corrections are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md). Point me at an
+experiment record or a command that reproduces the problem.

@@ -1,0 +1,66 @@
+writer,task,meta_id,meta_id_hex,format,filename,line,func_name,func_addr_hex,n_operands,fallback_args,resolved_via
+FUN_ram_01179c62,EARLY,538416576,0x201795c0,"%s(%u): Failed to reset SK watchdog, rc=%x
+",handleWdtEvent,27,FUN_ram_01179d2e,0x1179d2e,2,1,direct
+FUN_ram_01179c62,EARLY,538416696,0x20179638,"%s(%u): task not stopped!
+",DebugTaskRegisterWrite,462,FUN_ram_0117a014,0x117a014,1,0,direct
+FUN_ram_01179c62,EARLY,538416840,0x201796c8,"%s(%u): Timed out during xfer, 
+",xferDataLoop,340,FUN_ram_0117a0d0,0x117a0d0,1,0,direct
+FUN_ram_01179c62,EARLY,538416912,0x20179710,"%s(%u): start time: %llu, 
+curr time:  %llu, 
+timeout %llu
+",xferDataLoop,342,FUN_ram_0117a0d0,0x117a0d0,4,3,direct
+FUN_ram_01179c62,EARLY,538417008,0x20179770,"%s(%u): Debug task ALIVE! partitionId: %d parent: %d root: %d commsPort: %d initTask: %d initAddr: %d
+",main,156,FUN_ram_0117cda6,0x117cda6,7,6,direct
+FUN_ram_01179c62,EARLY,538417032,0x20179788,"%s(%u): unable to create port, rc=%x
+",initIrqEvent,47,FUN_ram_0117cda6,0x117cda6,2,1,direct
+FUN_ram_01179c62,EARLY,538417080,0x201797b8,"%s(%u): [31mERROR:[0m unable to create irq event, rc=%x
+",main,166,FUN_ram_0117cda6,0x117cda6,2,1,direct
+FUN_ram_01179c62,EARLY,538417392,0x201798f0,"%s(%u): [31mERROR:[0m task not stopped!
+",taskMemoryAccess,522,FUN_ram_0117a98c,0x117a98c,1,0,direct
+FUN_ram_01179c62,EARLY,538417416,0x20179908,"%s(%u): [31mERROR:[0m create wire list error, rc=%x
+",taskMemoryAccess,531,FUN_ram_0117a98c,0x117a98c,2,1,direct
+FUN_ram_01179c62,EARLY,538417440,0x20179920,"%s(%u): [31mERROR:[0m wire page error, rc=%x
+",taskMemoryAccess,554,FUN_ram_0117a98c,0x117a98c,2,1,direct
+FUN_ram_01179c62,EARLY,538417512,0x20179968,"%s(%u): [31mERROR:[0m task not stopped!
+",DebugTaskMemoryRead,493,FUN_ram_0117ac66,0x117ac66,1,0,direct
+FUN_ram_01179c62,EARLY,538417536,0x20179980,"%s(%u): Unable to read instruction, rc=%x
+",DebugTaskReadInstr,215,FUN_ram_0117ad12,0x117ad12,2,1,direct
+FUN_ram_01179c62,EARLY,538417560,0x20179998,"%s(%u): Unable to read full instruction, rc=%x
+",DebugTaskReadInstr,222,FUN_ram_0117ad12,0x117ad12,2,1,direct
+FUN_ram_01179c62,EARLY,538417584,0x201799b0,"%s(%u): DebugStop kernel call failed, rc=%x
+",DebugTaskStop,356,FUN_ram_0117ba28,0x117ba28,2,1,direct
+FUN_ram_01179c62,EARLY,538417656,0x201799f8,"%s(%u): NotifyPanic: unable to find target task %s rc %u 
+",handleDebugApiEvent,52,FUN_ram_0117ba64,0x117ba64,3,2,direct
+FUN_ram_01179c62,EARLY,538417728,0x20179a40,"%s(%u): init panic unexpected completedSize=0x%llx, expecting 0x%zx, exiting
+",handleTaskInitPanicEvent,26,FUN_ram_0117bca8,0x117bca8,3,2,direct
+FUN_ram_01179c62,EARLY,538417824,0x20179aa0,"%s(%u): init task panic is fatal, not continuing init task
+",handleTaskInitPanicEvent,88,FUN_ram_0117bca8,0x117bca8,1,0,direct
+FUN_ram_01179c62,EARLY,538417848,0x20179ab8,"%s(%u): Attach point: Stopped init task due to BKPT while not attached
+",handleTaskInitPanicEvent,64,FUN_ram_0117bca8,0x117bca8,1,0,direct
+FUN_ram_01179c62,EARLY,538417872,0x20179ad0,"%s(%u): DebugTaskStop call to override context failed rc %u
+",handleTaskInitPanicEvent,74,FUN_ram_0117bca8,0x117bca8,2,1,direct
+FUN_ram_01179c62,EARLY,538417920,0x20179b00,"%s(%u): [31mERROR:[0m TASK continue error, rc=%x
+",DebugTaskContinue,411,FUN_ram_0117c092,0x117c092,2,1,direct
+FUN_ram_01179c62,EARLY,538417944,0x20179b18,"%s(%u): WARNING: unexpected inital status, interrupt may be re-triggered, 
+",debuggerProcessRPC,606,FUN_ram_0117c142,0x117c142,1,0,direct
+FUN_ram_01179c62,EARLY,538417968,0x20179b30,"%s(%u): cmdreg: %x {%s, %s, session %u, seqnum %u | %s}
+",debuggerProcessRPC,607,FUN_ram_0117c142,0x117c142,7,6,direct
+FUN_ram_01179c62,EARLY,538417992,0x20179b48,"%s(%u): cmdreg: %x {%s, %s, session %u, optarg 0x%x}
+",debuggerProcessRPC,607,FUN_ram_0117c142,0x117c142,6,5,direct
+FUN_ram_01179c62,EARLY,538418088,0x20179ba8,"%s(%u): Wrong taskId for taskList
+",debuggerProcessRxfer,447,FUN_ram_0117c142,0x117c142,1,0,direct
+FUN_ram_01179c62,EARLY,538418184,0x20179c08,"%s(%u): [31mERROR:[0m task not stopped!
+",DebugTaskMemoryWrite,509,FUN_ram_0117c142,0x117c142,1,0,direct
+FUN_ram_01179c62,EARLY,538418208,0x20179c20,"%s(%u): Duplicate session
+",debuggerProcessRPC,630,FUN_ram_0117c142,0x117c142,1,0,direct
+FUN_ram_01179c62,EARLY,538418232,0x20179c38,"%s(%u): Received bad task idx %x
+",debuggerProcessRPC,651,FUN_ram_0117c142,0x117c142,2,1,direct
+FUN_ram_01179c62,EARLY,538418256,0x20179c50,"%s(%u): Task %u is already attached
+Use mon forceDetach %u to clean up
+",DebugTaskAttach,170,FUN_ram_0117c142,0x117c142,3,2,direct
+FUN_ram_01179c62,EARLY,538418304,0x20179c80,"%s(%u): Received bad command, 
+",debuggerProcessRPC,712,FUN_ram_0117c142,0x117c142,1,0,direct
+FUN_ram_01179c62,EARLY,538418328,0x20179c98,"%s(%u): cmdreg: %x {%s, %s, session %u, seqnum %u | %s}
+",debuggerProcessRPC,713,FUN_ram_0117c142,0x117c142,7,6,direct
+FUN_ram_01179c62,EARLY,538418352,0x20179cb0,"%s(%u): cmdreg: %x {%s, %s, session %u, optarg 0x%x}
+",debuggerProcessRPC,713,FUN_ram_0117c142,0x117c142,6,5,direct

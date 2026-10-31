@@ -1,0 +1,23 @@
+# License
+
+This repository has a split license.
+
+## Documentation
+
+The README, `RAW_EXPERIMENT_LOG.md`, `specs/`, and `experiments/` are licensed
+under the Creative Commons Attribution 4.0 International License (CC BY 4.0).
+Full text: `LICENSES/CC-BY-4.0.txt`.
+
+## Tool source
+
+Source under `tools/` is MIT, except these directories, which are GPL-2.0-only
+and carry that SPDX header in their source files:
+
+- `tools/issue-rate-probe/`
+- `tools/fmc-tools/`
+
+MIT text: `LICENSES/MIT.txt`. GPL-2.0-only text:
+`LICENSES/GPL-2.0-only.txt`.
+
+No NVIDIA firmware, driver binary, or decompiled firmware is distributed in
+this repository.

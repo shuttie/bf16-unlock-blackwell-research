@@ -1,0 +1,36 @@
+diff --git a/src/nvidia/src/kernel/gpu/fsp/kern_fsp.c b/src/nvidia/src/kernel/gpu/fsp/kern_fsp.c
+index 660532d2..33cfd709 100644
+--- a/src/nvidia/src/kernel/gpu/fsp/kern_fsp.c
++++ b/src/nvidia/src/kernel/gpu/fsp/kern_fsp.c
+@@ -256,9 +256,14 @@ kfspCleanupBootState_IMPL
+     KernelFsp *pKernelFsp
+ )
+ {
+-    OBJTMR *pTmr = GPU_GET_TIMER(pGpu);
+-    tmrEventDestroy(pTmr, pKernelFsp->pPollEvent);
+-
++    /*
++     * BF16 research fix: pPollEvent is created once in kfspConstructEngine and
++     * is reused by every boot attempt.  It must not be destroyed here: a
++     * failed attempt is retried, and the next attempt would schedule and then
++     * destroy a freed event (observed as a NULL hrtimer base in
++     * tmrEventDestroy -> nv_destroy_nano_timer).  It is destroyed once in
++     * kfspStateDestroy instead.
++     */
+     portMemFree(pKernelFsp->pCotPayload);
+     pKernelFsp->pCotPayload = NULL;
+ 
+@@ -310,6 +315,13 @@ kfspStateDestroy_IMPL
+ {
+     kfspCleanupBootState(pGpu, pKernelFsp);
+ 
++    /* BF16 research fix: engine-lifetime poll event, destroyed exactly once. */
++    if (pKernelFsp->pPollEvent != NULL)
++    {
++        tmrEventDestroy(GPU_GET_TIMER(pGpu), pKernelFsp->pPollEvent);
++        pKernelFsp->pPollEvent = NULL;
++    }
++
+     if (pKernelFsp->pVidmemFrtsMemdesc != NULL)
+     {
+         memdescFree(pKernelFsp->pVidmemFrtsMemdesc);

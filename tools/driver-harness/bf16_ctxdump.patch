@@ -1,0 +1,310 @@
+diff --git a/kernel-open/nvidia/os-interface.c b/kernel-open/nvidia/os-interface.c
+index a4727f04..9d32f03a 100644
+--- a/kernel-open/nvidia/os-interface.c
++++ b/kernel-open/nvidia/os-interface.c
+@@ -1901,6 +1901,29 @@ NV_STATUS NV_API_CALL os_open_temporary_file
+ #endif
+ }
+ 
++NV_STATUS NV_API_CALL os_open_write_file
++(
++    const char *filename,
++    void **ppFile
++)
++{
++#if NV_FILESYSTEM_ACCESS_AVAILABLE
++    struct file *file;
++
++    if ((filename == NULL) || (ppFile == NULL))
++        return NV_ERR_INVALID_ARGUMENT;
++
++    file = filp_open(filename, O_WRONLY | O_CREAT | O_TRUNC, 0600);
++    if (IS_ERR(file))
++        return NV_ERR_OPERATING_SYSTEM;
++
++    *ppFile = (void *)file;
++    return NV_OK;
++#else
++    return NV_ERR_NOT_SUPPORTED;
++#endif
++}
++
+ void NV_API_CALL os_close_file
+ (
+     void *pFile
+diff --git a/src/nvidia/arch/nvalloc/unix/include/os-interface.h b/src/nvidia/arch/nvalloc/unix/include/os-interface.h
+index 4fd158bd..da061ad7 100644
+--- a/src/nvidia/arch/nvalloc/unix/include/os-interface.h
++++ b/src/nvidia/arch/nvalloc/unix/include/os-interface.h
+@@ -189,6 +189,7 @@ NvU32       NV_API_CALL  os_get_page_refcount             (NvU64 address);
+ NvU32       NV_API_CALL  os_count_tail_pages              (NvU64 address);
+ void        NV_API_CALL  os_free_pages_phys               (NvU64, NvU32);
+ NV_STATUS   NV_API_CALL  os_open_temporary_file           (void **);
++NV_STATUS   NV_API_CALL  os_open_write_file              (const char *, void **);
+ void        NV_API_CALL  os_close_file                    (void *);
+ NV_STATUS   NV_API_CALL  os_write_file                    (void *, NvU8 *, NvU64, NvU64);
+ NV_STATUS   NV_API_CALL  os_read_file                     (void *, NvU8 *, NvU64, NvU64);
+diff --git a/src/nvidia/arch/nvalloc/unix/src/os.c b/src/nvidia/arch/nvalloc/unix/src/os.c
+index 25a4f617..98af5e11 100644
+--- a/src/nvidia/arch/nvalloc/unix/src/os.c
++++ b/src/nvidia/arch/nvalloc/unix/src/os.c
+@@ -4641,6 +4641,19 @@ osOpenTemporaryFile
+     return os_open_temporary_file(ppFile);
+ }
+ 
++/*
++ * @brief Opens a named file for writing (research harness)
++ */
++NV_STATUS
++osOpenWriteFile
++(
++    const char *path,
++    void **ppFile
++)
++{
++    return os_open_write_file(path, ppFile);
++}
++
+ /*
+  * @brief Closes the specified temporary file
+  *
+diff --git a/src/nvidia/src/kernel/gpu/gr/kernel_graphics_context.c b/src/nvidia/src/kernel/gpu/gr/kernel_graphics_context.c
+index 567aa811..882c8c2f 100644
+--- a/src/nvidia/src/kernel/gpu/gr/kernel_graphics_context.c
++++ b/src/nvidia/src/kernel/gpu/gr/kernel_graphics_context.c
+@@ -43,6 +43,139 @@
+ #include "platform/sli/sli.h"
+ #include "rmapi/client.h"
+ 
++/* BF16_CTXDUMP_BEGIN */
++/*
++ * Research-only: dump an initialized GR context buffer to /dev/shm.
++ * Read-only; the buffer is mapped through memdescMap and unmapped immediately.
++ * Enabled by the driver-harness/dump_ctx.sh harness.
++ */
++extern NV_STATUS osOpenWriteFile(const char *path, void **ppFile);
++extern NV_STATUS osWriteToFile(void *pFile, NvU8 *pBuffer, NvU64 size, NvU64 offset);
++extern void      osCloseFile(void *pFile);
++extern NvS32     os_snprintf(char *buf, NvU32 size, const char *fmt, ...);
++
++#define BF16_CTXDUMP_BYTES 8192
++#define BF16_CTXDUMP_FILE_MAX 0x400000
++#define BF16_CTXDUMP_DMESG 0
++#define BF16_CTXDUMP_MAIN_OFFSET 0
++#define BF16_CTXDUMP_CREATE 0
++#define BF16_CTXDUMP_MAX   8
++#define BF16_CTXDUMP_EXIT_MAX 2
++#define BF16_CTXDUMP_PATCH_EXIT_MAX 2
++#define BF16_CTXDUMP_GLOBAL 1
++#define BF16_CTXDUMP_GLOBAL_MAX 6
++
++static NvU32 bf16CtxDumpSeq = 0;
++static NvU32 bf16CtxDumpExitSeq = 0;
++static NvU32 bf16CtxDumpPatchExitSeq = 0;
++static NvU32 bf16CtxDumpGlobalCount = 0;
++static NvBool bf16CtxDumpGlobalDone[GR_GLOBALCTX_BUFFER_COUNT];
++
++static void
++bf16WriteFile
++(
++    const char *path,
++    const void *buf,
++    NvU64       len
++)
++{
++    void     *pFile = NULL;
++    NV_STATUS status;
++
++    status = osOpenWriteFile(path, &pFile);
++    if (status != NV_OK)
++    {
++        NV_PRINTF(LEVEL_ERROR, "BF16: ctxdump file open failed %s status=%#x\n",
++                  path, status);
++        return;
++    }
++
++    status = osWriteToFile(pFile, (NvU8 *)buf, len, 0);
++    if (status != NV_OK)
++    {
++        NV_PRINTF(LEVEL_ERROR, "BF16: ctxdump file write failed %s status=%#x\n",
++                  path, status);
++    }
++    osCloseFile(pFile);
++}
++
++static void
++bf16DumpCtxBuffer
++(
++    OBJGPU            *pGpu,
++    const char        *tag,
++    NvU32              seq,
++    MEMORY_DESCRIPTOR *pMemDesc,
++    NvU64              start
++)
++{
++    NvU64      size;
++    NvU64      dumpSize;
++#if BF16_CTXDUMP_DMESG
++    NvU64      off;
++#endif
++    NvU64      phys;
++    NvP64      pAddr = 0;
++    NvP64      pPriv = 0;
++    NV_STATUS  status;
++    NvU8      *p;
++
++    if (pMemDesc == NULL)
++        return;
++
++    size     = memdescGetSize(pMemDesc);
++    phys     = memdescGetPhysAddr(pMemDesc, AT_GPU, 0);
++    if (start >= size)
++        return;
++    dumpSize = size - start;
++    if (dumpSize > (NvU64)BF16_CTXDUMP_FILE_MAX)
++        dumpSize = (NvU64)BF16_CTXDUMP_FILE_MAX;
++    dumpSize &= ~(NvU64)0xF;
++
++    if (dumpSize == 0)
++        return;
++
++    status = memdescMap(pMemDesc, start, dumpSize, NV_TRUE, NV_PROTECT_READABLE,
++                        &pAddr, &pPriv);
++    if (status != NV_OK)
++    {
++        NV_PRINTF(LEVEL_ERROR,
++                  "BF16: ctxdump %s seq=%u size=%llu phys=0x%llx map_status=0x%x\n",
++                  tag, seq, size, phys, status);
++        return;
++    }
++
++    p = (NvU8 *)NvP64_VALUE(pAddr);
++    {
++        char path[160];
++
++        os_snprintf(path, sizeof(path), "/dev/shm/bf16_ctxdump_%s_%u_%u.bin",
++                    tag, pGpu->gpuInstance, seq);
++        bf16WriteFile(path, p, dumpSize);
++        NV_PRINTF(LEVEL_ERROR,
++                  "BF16: ctxdump %s seq=%u size=%llu phys=0x%llx dump=%llu file=%s\n",
++                  tag, seq, size, phys, dumpSize, path);
++    }
++
++#if BF16_CTXDUMP_DMESG
++    for (off = 0; off < dumpSize; off += 16)
++    {
++        NV_PRINTF(LEVEL_ERROR,
++                  "BF16CTX %s %u %08llx:"
++                  " %02x%02x%02x%02x %02x%02x%02x%02x"
++                  " %02x%02x%02x%02x %02x%02x%02x%02x\n",
++                  tag, seq, start + off,
++                  p[off + 0],  p[off + 1],  p[off + 2],  p[off + 3],
++                  p[off + 4],  p[off + 5],  p[off + 6],  p[off + 7],
++                  p[off + 8],  p[off + 9],  p[off + 10], p[off + 11],
++                  p[off + 12], p[off + 13], p[off + 14], p[off + 15]);
++    }
++#endif
++
++    memdescUnmap(pMemDesc, NV_TRUE, pAddr, pPriv);
++}
++/* BF16_CTXDUMP_END */
++
+ /*!
+  * @brief Retrieve the context object from a KernelChannel.
+  *
+@@ -1991,12 +2124,28 @@ kgrctxMarkCtxBufferInitialized_IMPL
+     {
+         case NV2080_CTRL_GPU_PROMOTE_CTX_BUFFER_ID_MAIN:
+             pKernelGraphicsContextUnicast->bKGrMainCtxBufferInitialized = NV_TRUE;
++#if BF16_CTXDUMP_CREATE
++            if (bf16CtxDumpSeq < BF16_CTXDUMP_MAX)
++            {
++                bf16CtxDumpSeq++;
++                bf16DumpCtxBuffer(pGpu, "main", bf16CtxDumpSeq,
++                                  pKernelGraphicsContextUnicast->pMainCtxBuffer, 0);
++            }
++#endif
+             break;
+         case NV2080_CTRL_GPU_PROMOTE_CTX_BUFFER_ID_PM:
+             pKernelGraphicsContextUnicast->bKGrPmCtxBufferInitialized = NV_TRUE;
+             break;
+         case NV2080_CTRL_GPU_PROMOTE_CTX_BUFFER_ID_PATCH:
+             pKernelGraphicsContextUnicast->bKGrPatchCtxBufferInitialized = NV_TRUE;
++#if BF16_CTXDUMP_CREATE
++            if (bf16CtxDumpSeq < BF16_CTXDUMP_MAX)
++            {
++                bf16CtxDumpSeq++;
++                bf16DumpCtxBuffer(pGpu, "patch", bf16CtxDumpSeq,
++                                  pKernelGraphicsContextUnicast->ctxPatchBuffer.pMemDesc, 0);
++            }
++#endif
+             break;
+         case NV2080_CTRL_GPU_PROMOTE_CTX_BUFFER_ID_BUFFER_BUNDLE_CB:
+             // fall-through
+@@ -2022,6 +2171,17 @@ kgrctxMarkCtxBufferInitialized_IMPL
+ 
+                 pKCtxBuffers = &pKernelGraphicsContextUnicast->localCtxBuffer;
+                 pKCtxBuffers->bInitialized[internalId] = NV_TRUE;
++#if BF16_CTXDUMP_GLOBAL
++                if ((pKCtxBuffers->memDesc[internalId] != NULL) &&
++                    (bf16CtxDumpGlobalCount < BF16_CTXDUMP_GLOBAL_MAX) &&
++                    !bf16CtxDumpGlobalDone[internalId])
++                {
++                    bf16CtxDumpGlobalDone[internalId] = NV_TRUE;
++                    bf16CtxDumpGlobalCount++;
++                    bf16DumpCtxBuffer(pGpu, "global", (NvU32)internalId,
++                                      pKCtxBuffers->memDesc[internalId], 0);
++                }
++#endif
+                 break;
+             }
+             // fall-through
+@@ -2046,6 +2206,17 @@ kgrctxMarkCtxBufferInitialized_IMPL
+             pKCtxBuffers = kgraphicsGetGlobalCtxBuffers(pGpu, pKernelGraphics, gfid);
+ 
+             pKCtxBuffers->bInitialized[internalId] = NV_TRUE;
++#if BF16_CTXDUMP_GLOBAL
++            if ((pKCtxBuffers->memDesc[internalId] != NULL) &&
++                (bf16CtxDumpGlobalCount < BF16_CTXDUMP_GLOBAL_MAX) &&
++                !bf16CtxDumpGlobalDone[internalId])
++            {
++                bf16CtxDumpGlobalDone[internalId] = NV_TRUE;
++                bf16CtxDumpGlobalCount++;
++                bf16DumpCtxBuffer(pGpu, "global", (NvU32)internalId,
++                                  pKCtxBuffers->memDesc[internalId], 0);
++            }
++#endif
+             break;
+         }
+         default:
+@@ -2689,6 +2860,14 @@ kgrctxUnmapMainCtxBuffer_IMPL
+     status = kchangrpGetEngineContextMemDesc(pGpu, pKernelChannel->pKernelChannelGroupApi->pKernelChannelGroup, &pCtxBufferMemDesc);
+     if ((status == NV_OK) && (pCtxBufferMemDesc != NULL))
+     {
++#if BF16_CTXDUMP_EXIT_MAX > 0
++        if (bf16CtxDumpExitSeq < BF16_CTXDUMP_EXIT_MAX)
++        {
++            bf16CtxDumpExitSeq++;
++            bf16DumpCtxBuffer(pGpu, "main-exit", bf16CtxDumpExitSeq, pCtxBufferMemDesc,
++                              BF16_CTXDUMP_MAIN_OFFSET);
++        }
++#endif
+         // TODO remove Channel, ENG_GR dependencies
+         kchannelUnmapEngineCtxBuf(pGpu, pKernelChannel, ENG_GR(kgraphicsGetInstance(pGpu, pKernelGraphics)));
+         NV_ASSERT_OR_RETURN_VOID(
+@@ -2903,6 +3082,15 @@ kgrctxFreePatchBuffer_IMPL
+         return;
+     }
+ 
++#if BF16_CTXDUMP_PATCH_EXIT_MAX > 0
++    if (bf16CtxDumpPatchExitSeq < BF16_CTXDUMP_PATCH_EXIT_MAX)
++    {
++        bf16CtxDumpPatchExitSeq++;
++        bf16DumpCtxBuffer(pGpu, "patch-exit", bf16CtxDumpPatchExitSeq,
++                          pKernelGraphicsContextUnicast->ctxPatchBuffer.pMemDesc, 0);
++    }
++#endif
++
+     memdescFree(pKernelGraphicsContextUnicast->ctxPatchBuffer.pMemDesc);
+     memdescDestroy(pKernelGraphicsContextUnicast->ctxPatchBuffer.pMemDesc);
+ 
