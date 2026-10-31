@@ -149,8 +149,9 @@ timeout, separate from decode.
 | `0xBADF4100` | decode/access error | refused GSP `HWCFG2` at `0x1100f4` |
 | `0xBADF5545` | command-ID blocked | FECS command-ID register read |
 | `0xBADF1100` | `FECS_PRI_DECODE` | address not decodable |
-| `0xBADF1301` | `0xBADF13` (not public) | GR space `0x1c8000`–`0x1cbc00` |
-| `0xBADF202B` | `0xBADF20` (not public) | GR space `0x22c000`–`0x22f800` |
+| `0xBADF1301` | `0xBADF13` (not public) | GR space `0x1c8000`–`0x1cbcff` |
+| `0xBADF202B` | `0xBADF20` (not public) | GR space `0x22c000`–`0x22f9ff` |
+| `0xBADF2020` | `0xBADF20` (not public) | GR space `0x1e0000` and `0x1fe000` on one card |
 | `0xBADFFFFF` | not public | GSP-master read of the four PRISCV ICD registers |
 
 The low byte also encodes the caller or engine for the blocked/port cases, which
@@ -400,7 +401,8 @@ the ICD itself is in [GSP RISC-V and PRISCV](06_gsp-riscv-and-priscv.md).
 | NV status codes | [crashed GSP](../experiments/01_software-register-writes.md#011-first-register-write-hits-a-crashed-gsp), [16 MiB heap](../experiments/05_fmc-fsp-boot-inputs.md#0514-16-mib-heap-request-wedges-the-boot), [GR_CTX rejected](../experiments/01_software-register-writes.md#017-per-context-registers-need-a-caller-owned-channel) |
 | Sentinels and PRI telemetry | [live probes](../experiments/03_fecs-and-gr-context.md#031-live-fecs-fsp-and-sec2-probes), [FSP EMEM](../experiments/04_hs-sec2-fsp-memory.md#042-fsp-emem-pointer-writes-are-dropped), [sentinel analysis](../experiments/08_assessment-and-cross-checks.md#089-sentinel-and-raw-function-analysis), [PRISCV split](../experiments/04_hs-sec2-fsp-memory.md#043-priscv-block-is-split-per-master), [live ICD](../experiments/04_hs-sec2-fsp-memory.md#044-priscv-icd-is-a-live-debug-port), [debugger test](../experiments/01_software-register-writes.md#018-the-debugger-class-reads-the-bank-but-cannot-write-it) |
 | WPR fill `0xbad0ac00` | [closed FB route](../experiments/05_fmc-fsp-boot-inputs.md#0525-fb-route-shut) |
-| GSP log format and decoder | [decoder](../experiments/08_assessment-and-cross-checks.md#086-gsp-log-decoding-without-the-metadata-elf), [live capture](../experiments/08_assessment-and-cross-checks.md#088-live-gsp-log-capture-and-decode), [sentinel analysis](../experiments/08_assessment-and-cross-checks.md#089-sentinel-and-raw-function-analysis) |
+| GSP log format and decoder | [decoder](../experiments/08_assessment-and-cross-checks.md#086-gsp-log-decoding-without-the-metadata-elf), [live capture](../experiments/08_assessment-and-cross-checks.md#088-live-gsp-log-capture-and-decode), [sentinel analysis](../experiments/08_assessment-and-cross-checks.md#089-sentinel-and-raw-function-analysis), [boot capture](../experiments/11_falcon-and-gr-window-probe.md#116-no-stack-component-reads-the-ucode-table) |
+| GR space above the window | [the ROM alias](../experiments/11_falcon-and-gr-window-probe.md#114-the-space-above-the-window-is-the-vbios-rom), [the per-card table](../experiments/11_falcon-and-gr-window-probe.md#115-the-0x1f2000-block-is-a-per-card-table) |
 | Tracing facilities | [tracing audit](../experiments/08_assessment-and-cross-checks.md#084-audit-of-the-tracing-facilities) |
 | ICD rejections | [live ICD](../experiments/04_hs-sec2-fsp-memory.md#044-priscv-icd-is-a-live-debug-port) |
 

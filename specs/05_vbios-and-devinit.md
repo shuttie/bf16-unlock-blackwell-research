@@ -54,6 +54,8 @@ image starts at BAR0 + `0x338000`, after a `0x38000` head. The PCI expansion ROM
 BAR exposes only the PciAt and EFI images; the rest needs the PROM window. This
 board has no ERoT. See [the vBIOS
 dump](../experiments/07_plaintext-corpus.md#073-the-vbios-has-no-feat-address).
+A debugger global read of BAR0 + `0x300000` returns the same image byte for
+byte ([the GR map](../experiments/11_falcon-and-gr-window-probe.md#114-the-space-above-the-window-is-the-vbios-rom)).
 
 The full 2 MiB PROM aperture maps as follows ([the full PROM
 scan](../experiments/07_plaintext-corpus.md#079-the-full-prom-has-no-feat-table)):
@@ -149,6 +151,15 @@ decode](../experiments/11_falcon-and-gr-window-probe.md#113-the-ucode-table-is-t
 The driver looks for FWSEC app IDs `0x05`, `0x45`, `0x85`; none is present. That
 is consistent with the FSP-based boot chain ([the vBIOS
 dump](../experiments/07_plaintext-corpus.md#073-the-vbios-has-no-feat-address)).
+The table also has no consumer in the open stack on GB202. The loader that
+would read it is chip-gated: the Blackwell binding maps the VBIOS extraction to
+a stub that returns `NV_ERR_NOT_SUPPORTED`, which the init path treats as
+success. On the chips that do run it, the parser accepts only those three app
+IDs and descriptor versions 2 and 3. The GSP-RM has no BIT parser in its
+decompiled corpus, and the RM boot log starts GR through `sec2_acr` with
+RM-memory pointers, not a vBIOS offset ([the consumer
+record](../experiments/11_falcon-and-gr-window-probe.md#116-no-stack-component-reads-the-ucode-table)).
+The four bodies are not GR ucode on this card.
 
 The other targets are not publicly mapped. "App `0x23` = SEC2" is withdrawn with
 the FECS reading: no public source maps target `0x0E`, and the image is

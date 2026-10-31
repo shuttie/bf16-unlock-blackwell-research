@@ -33,10 +33,16 @@
 - The FECS, GPCCS, and PMU falcon bases return decode or not-implemented
   markers, and the GR window the GSP-RM admits is empty. The host has no FECS
   code or state window ([the falcon probe](experiments/11_falcon-and-gr-window-probe.md)).
-- The vBIOS table is the PMU lookup table, so the two target-`0x01` images are
-  not FECS/GPCCS. All four descriptors are version 6 and the code is encrypted
+- The space above that window is decode refusals plus the vBIOS ROM at
+  `0x300000`–`0x4fffff` and one per-card table at `0x1f2000`–`0x1f3fff`. Neither
+  is GR ucode ([the GR
+  map](experiments/11_falcon-and-gr-window-probe.md#114-the-space-above-the-window-is-the-vbios-rom)).
+- The vBIOS table is the PMU lookup table, the two target-`0x01` images are not
+  FECS/GPCCS, and no component in the open stack reads the table on GB202
   ([the table
-  decode](experiments/11_falcon-and-gr-window-probe.md#113-the-ucode-table-is-the-pmu-lookup-table)).
+  decode](experiments/11_falcon-and-gr-window-probe.md#113-the-ucode-table-is-the-pmu-lookup-table),
+  [the consumer
+  record](experiments/11_falcon-and-gr-window-probe.md#116-no-stack-component-reads-the-ucode-table)).
 - The remaining PL3 parsers are the [suspend/resume
   descriptor](#sr-descriptor-and-page-table) and the [FSP
   framing](#fsp-framing). The SR harness now has a relative radix3 address and
@@ -66,7 +72,7 @@ cost.
 | C15 | [Readout decode](#readout-decode) | What are the un-decoded readout bits? | offline | May change the target |
 | C03 | [vBIOS app 0x23](#vbios-app-0x23) | Is the plaintext data tail a devinit template? | offline decode | Only direct-unlock candidate |
 | C04 | [Override payload](#override-payload-format) | Does the SS0/SS1 override set full rate? | 1 PRO cold-boot series | Validates a writer, not a route |
-| C18 | [vBIOS ucode corpus](#vbios-ucode-corpus) | Is any vBIOS body GR ucode? | weeks | Rarely decisive |
+| C18 | [vBIOS ucode corpus](#vbios-ucode-corpus) | Which stack consumes the vBIOS bodies? | days | Low, closed here |
 
 ## Measured: the cold-boot parser map
 
@@ -421,13 +427,22 @@ length, and the two target-`0x01` images share a plaintext preamble
 The FMC key search targeted the FMC and the SEC2 booter, not these
 ([the key search](experiments/07_plaintext-corpus.md#0710-the-fmc-key-search-comes-back-negative)).
 
-**Try.** Identify target `0x0E`, find the GSP-RM loader that consumes the table,
-and check whether any vBIOS entry is GR ucode at all. Check the encrypted bodies
-against the FMC key family. The Falcon parcels oracle only matters after a
-FECS/GPCCS consumer is named ([the FMC tools](tools/fmc-tools/)).
+**What closed.** No component in the open stack reads the table on GB202. The
+host FWSEC loader is the only parser, it accepts apps `0x05`/`0x45`/`0x85` and
+descriptor versions 2 and 3, and the Blackwell chip binding maps the VBIOS
+extraction to a stub returning `NV_ERR_NOT_SUPPORTED`, which the init path
+treats as success. The GSP-RM has no BIT parser, and the RM boot log starts GR
+through `sec2_acr` with RM-memory pointers ([the consumer
+record](experiments/11_falcon-and-gr-window-probe.md#116-no-stack-component-reads-the-ucode-table)).
+The four bodies are not GR ucode on this card.
 
-**Decision.** A named FECS/GPCCS consumer reopens the decode. A PMU/FSP-only
-table closes the corpus for this route. High effort, no hardware.
+**Try.** Identify target `0x0E` and find the consumer in another stack, such as
+the Windows driver or the device firmware. Check the encrypted bodies against
+the FMC key family. The Falcon parcels oracle only matters after a FECS/GPCCS
+consumer is named ([the FMC tools](tools/fmc-tools/)).
+
+**Decision.** The corpus is closed for the Linux open-driver route. Only a
+consumer in a different stack would reopen it. Low value, offline.
 
 ## Closed, do not retry
 
@@ -453,9 +468,16 @@ table closes the corpus for this route. High effort, no hardware.
   test](experiments/01_software-register-writes.md#018-the-debugger-class-reads-the-bank-but-cannot-write-it)).
 - Reading FECS/GPCCS code or state from the host. The FECS, GPCCS, and PMU falcon
   bases return decode or not-implemented markers, the security engines block
-  their boot vectors, and the GR window the GSP-RM admits is empty ([the falcon
+  their boot vectors, and the GR window the GSP-RM admits is empty. The space
+  above it is the vBIOS ROM and one per-card table, not ucode ([the falcon
   probe](experiments/11_falcon-and-gr-window-probe.md), [the
-  window](experiments/11_falcon-and-gr-window-probe.md#112-the-admitted-gr-window-is-empty)).
+  window](experiments/11_falcon-and-gr-window-probe.md#112-the-admitted-gr-window-is-empty),
+  [the GR
+  map](experiments/11_falcon-and-gr-window-probe.md#114-the-space-above-the-window-is-the-vbios-rom)).
+- Reading ucode through the vBIOS table on GB202. The host FWSEC path is
+  chip-gated to a stub and the RM boots GR through `sec2_acr` from RM memory
+  ([the consumer
+  record](experiments/11_falcon-and-gr-window-probe.md#116-no-stack-component-reads-the-ucode-table)).
 - The `0x137200` lead. It is a privilege-protected FECS/GR register
   (`0xc120048a` in a `0x30`-byte entry pattern); the FECS log pairs it with
   `0x14252215` and the refusal `0xbadf5128` ([the descriptor

@@ -344,6 +344,14 @@ decode](../experiments/01_software-register-writes.md#015-the-permission-mask-ad
 - The FECS and GPCCS falcon blocks are not host-readable: their documented bases
   return decode markers, and the GR window the GSP-RM admits is empty
   ([the falcon probe](../experiments/11_falcon-and-gr-window-probe.md)).
+- The space above that window is decode refusals plus the vBIOS ROM at
+  `0x300000`–`0x4fffff` and one per-card table at `0x1f2000`–`0x1f3fff`. Neither
+  carries GR ucode or a known rate field
+  ([the GR map](../experiments/11_falcon-and-gr-window-probe.md#114-the-space-above-the-window-is-the-vbios-rom)).
+- The vBIOS ucode table has no consumer in the open stack on GB202: the host
+  FWSEC path is short-circuited and the RM boots GR through `sec2_acr` from RM
+  memory ([the consumer
+  record](../experiments/11_falcon-and-gr-window-probe.md#116-no-stack-component-reads-the-ucode-table)).
 - Two PRO 6000s read `FEAT_READOUT_1 = 0` with every arithmetic speed fuse at 0,
   and one card's FP32-accumulate rate equals its FP16-accumulate rate
   ([the reference dump](../experiments/08_assessment-and-cross-checks.md#0810-an-rtx-pro-6000-reference-dump)).

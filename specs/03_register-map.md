@@ -49,8 +49,8 @@
   - [Other FEAT words](#other-feat-words)
   - [Cross-part FEAT values](#cross-part-feat-values)
 - [FECS](#fecs): PLMs and the `0x409800` doorbell.
-- [SM and GR](#sm-and-gr): the writable rate modifier and the `0x137000`
-  privilege block.
+- [SM and GR](#sm-and-gr): the writable rate modifier, the `0x137000`
+  privilege block, the admitted GR window, and the space above it.
 - [GSP Falcon](#gsp-falcon): the Falcon block and its EMEM window.
 - [PRISCV](#priscv): the RISC-V block, its partitions, and the ICD.
 - [FSP](#fsp): the FSP block and the PFSP EMEM channels.
@@ -398,10 +398,57 @@ each `0x2000` page start and a `0x100`-byte header at `0x140000`: `0x10`,
 `0xffffffff` and `0x40000099`. The page at `0x17f000` is all zero. See [the GR
 window probe](../experiments/11_falcon-and-gr-window-probe.md#112-the-admitted-gr-window-is-empty).
 
-Above the window, `0x1c0000 = 0xffffff8f`. The ranges `0x1c8000`–`0x1cbc00` and
-`0x22c000`–`0x22f800` return the decode markers `0xbadf1301` and `0xbadf202b`,
-and `0x1f2000`–`0x1f3c00` holds constants including `0x8fc36009` and
-`0xecc36007`, followed by eight `0xffffffff` pages.
+### GR space above the window
+
+The space above `0x17ffff` is decode refusals, small blocks, one per-card
+table, and a 2 MiB ROM window ([the GR
+map](../experiments/11_falcon-and-gr-window-probe.md#114-the-space-above-the-window-is-the-vbios-rom)):
+
+| Range | Content |
+|---|---|
+| `0x180000`–`0x19d000` | `0xBADF1002`/`0xBADF1100` alternating in `0x2000` windows |
+| `0x19e000`–`0x1bffff` | `0xBADF1100` |
+| `0x1c0000`–`0x1c4fff` | `0x4c`-byte header, then `0xBADF5040` |
+| `0x1c5000`–`0x1c7fff` | `0xBADF1100` |
+| `0x1c8000`–`0x1cbcff` | `0xBADF1301` |
+| `0x1cd000`–`0x1d6fff` | `0xBADF5040`, zero pages at `0x1d0000` and `0x1d4000`, `0x804407` at `0x1ce000`, `0x1d2000`, `0x1d6000` |
+| `0x1d7000`–`0x1e2000` | `0xBADF5040` |
+| `0x1e3000`–`0x1ef000` | `0xBADF1100` |
+| `0x1f2000`–`0x1f3fff` | the per-card table below |
+| `0x1f4000`–`0x1f5fff` | `0xffffffff` |
+| `0x1f6000`–`0x1ff000` | markers; `0x7e59e2c` at `0x1f9000`, `0x80000000` at `0x1fe000` on card 0 |
+| `0x200000`–`0x22bfff` | `0xBADF1002` |
+| `0x22c000`–`0x22f9ff` | `0xBADF202B` |
+| `0x230000`–`0x2fffff` | markers, with `0xffffffcc` words between `0x290000` and `0x2b5000` |
+| `0x300000`–`0x4fffff` | the 2 MiB vBIOS PROM image, byte for byte |
+| `0x500000` | `0x87fc029f`, `0x08000000`, `0x00010000`, then `0xBADF5040` |
+
+The ROM window is the same aperture that holds the flash at BAR0 + `0x300000`
+([where the flash sits](../specs/05_vbios-and-devinit.md#where-it-sits)). A dense
+read of `0x310000` looks like memory because the vBIOS carries the encrypted
+ucode bodies; the words match the PROM dump exactly. The debugger's GLOBAL read
+is therefore a BAR0 read, not a separate GR address space.
+
+### The per-card table at 0x1f2000
+
+The block at `0x1f2000`–`0x1f3fff` is 32 records of `0x100` bytes with one
+layout. Each record returns values at fixed word offsets and `0xBADF5040` at
+`+0x28`–`0x38`, `+0x70`–`0x78`, `+0xa8`–`0xb8`, and `+0xf0`–`0xf8`; `+0xfc`
+reads `3`. Record 0 is header-like (`0x1000`, `0x1000000`, `0xe000f096`,
+`0xc0003600`, `0xf4278000`, `0x8`, `0x7`, `0x18390d`, `0x10005`) and has a few
+runtime words; records 1–31 carry per-card values
+([the block](../experiments/11_falcon-and-gr-window-probe.md#115-the-0x1f2000-block-is-a-per-card-table)).
+
+- 1,155 non-zero words; 567 differ between the two local cards.
+- The body is identical across a driver reload, so it is fused or built at
+  init. A reboot test is missing.
+- The sampled per-card words are not in either vBIOS dump or the GSP image, and
+  the FEAT bank shares only generic constants.
+- GLOBAL and `GR_CTX` read the same words; `TPC`, `SM`, and `QUAD` return
+  `regStatus 2`.
+
+The semantics are open. Nothing in the block matches a known rate, PLM, or
+FEAT field.
 
 ## GSP Falcon
 
