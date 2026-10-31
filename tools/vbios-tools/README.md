@@ -1,17 +1,56 @@
-# vBIOS tools
+# vBIOS tools: dump and parse the board ROM
 
 Read-only dumpers and parsers for the GB202 board vBIOS. The tools locate the
-image behind the card's PROM aperture, dump it, parse the PCI image chain, BIT,
+image behind the card's PROM aperture, dump it, parse the PCI image chain, BIT
 and microcode table, and scan the plaintext for FEAT/FUSE/devinit references.
+
+## At a glance
+
+- **What it does.** Locates and dumps the board ROM, then parses the PCI image
+  chain, BIT (BIOS Information Table), and Falcon microcode table, and scans the
+  plaintext for rate-register and devinit references.
+- **Access.** Read-only. The C tools open `resource0` read-only and `mmap` it
+  `PROT_READ`; no register writes.
+- **Inputs.** A live card with root, or a local 1 MiB image / 2 MiB aperture
+  dump. No firmware or ROM ships here.
+- **Outputs.** Raw dumps, the PCI/BIT/microcode parse, and the devinit scan.
+
+**The short version.**
+
+- The vBIOS image sits at BAR0 + `0x338000` behind a `0x38000` head; the full
+  PROM aperture is 2 MiB at BAR0 + `0x300000`. See [where the vBIOS
+  sits](../../specs/05_vbios-and-devinit.md#where-it-sits).
+- `vbios_read` writes the 1 MiB image; `prom_read_raw` writes the 2 MiB
+  aperture.
+- `parse_flash.py` walks the PCI image chain, BIT tokens, FwSec images, and the
+  microcode table.
+- `devinit_scan.py` applies the `0x18000` EFI correction and follows the `0x70`
+  token; it is the authoritative microcode-table parser.
+- The plaintext scan finds no FEAT address. The only PLM values are in app
+  `0x23` data, as the [plaintext-layer
+  scan](../../specs/05_vbios-and-devinit.md#what-the-plaintext-layer-does-not-contain)
+  records.
+
+**In this file.**
+
+- [Layout](#layout)
+- [Build](#build)
+- [Dump](#dump)
+- [Parse](#parse)
+- [Input format](#input-format)
+- [Example output](#example-output)
+- [Safety and access](#safety-and-access)
+- [Terms](#terms)
+- [Related](#related)
 
 ## Layout
 
 | File | What it does |
 |---|---|
-| `vbios_probe.c` | Reads the ERoT grant and PROM window, then scans BAR0 for the ROM signature. |
+| `vbios_probe.c` | Reads the PROM head at `0x1400` and the window at `0x300000`, then scans BAR0 for the ROM signature. |
 | `vbios_read.c` | Dumps the vBIOS image at BAR0 + `0x338000`, or the first `0x55AA` hit. |
-| `prom_read_raw.c` | Dumps any range of the 2 MiB PROM aperture. |
-| `parse_flash.py` | Walks the PCI image chain, BIT tokens, FwSec images, and ucode table. |
+| `prom_read_raw.c` | Dumps any range of the 2 MiB [PROM aperture](../../specs/05_vbios-and-devinit.md#where-it-sits). |
+| `parse_flash.py` | Walks the [PCI image chain](../../specs/05_vbios-and-devinit.md#pci-image-chain), [BIT](../../specs/05_vbios-and-devinit.md#bit), FwSec images, and [microcode table](../../specs/05_vbios-and-devinit.md#microcode-table). |
 | `bit_tokens.py` | Decodes and classifies every BIT token; diffs two dumps. |
 | `devinit_scan.py` | Scans for devinit opcodes, register-address lists, and FEAT/PLM anchors. |
 
@@ -37,8 +76,8 @@ sudo ./vbios_read 0000:41:00.0 flash_41.bin
 sudo ./prom_read_raw 0000:41:00.0 prom_full_41.bin
 ```
 
-- `vbios_probe <bdf> [start_hex] [len_hex]` reads the ERoT grant at `0x1400`, the
-  PROM head at `0x300000`, and scans the given range for the 8-byte ROM prefix.
+- `vbios_probe <bdf> [start_hex] [len_hex]` reads the PROM head at `0x1400` and the
+  window at `0x300000`, and scans the given range for the 8-byte ROM prefix.
 - `vbios_read <bdf> <out> [off_hex] [size_hex]` defaults to `0x338000`/`0x100000`.
 - `prom_read_raw <bdf> <out> [off_hex] [size_hex]` defaults to the whole 2 MiB
   aperture (`0x300000`/`0x200000`) and clamps at the aperture end.
@@ -53,11 +92,14 @@ python3 -I devinit_scan.py flash1m_41.bin [other.bin]
 
 `parse_flash.py` expects a standalone image that starts with `0x55AA`. For the
 whole 2 MiB aperture, point it at the image offset or use `devinit_scan.py`,
-which applies the EFI-image correction itself. `bit_tokens.py` and
-`devinit_scan.py` accept either a 1 MiB image or the 2 MiB aperture.
+which applies the [EFI-image
+correction](../../specs/05_vbios-and-devinit.md#pci-image-chain) itself.
+`bit_tokens.py` and `devinit_scan.py` accept either a 1 MiB image or the 2 MiB
+aperture.
 
 `devinit_scan.py` is the authoritative ucode-table parser: it applies the
-`0x18000` EFI correction before following the `0x70` token. `parse_flash.py` is
+`0x18000` EFI correction before following the [`0x70`
+token](../../specs/05_vbios-and-devinit.md#microcode-table). `parse_flash.py` is
 useful for the image chain and BIT; its FALCON_DATA path assumes the table
 pointer is already image-relative.
 
@@ -65,9 +107,11 @@ pointer is already image-relative.
 
 - `vbios_read` writes a 1 MiB image beginning at the vBIOS `0x55AA` signature.
 - `prom_read_raw` writes the 2 MiB aperture: a `0x38000` head, the image at
-  `0x38000`, and the `0xBADF1100` sentinel from `0x138000` to `0x200000`.
+  `0x38000`, and the [`0xBADF1100`
+  sentinel](../../specs/05_vbios-and-devinit.md#where-it-sits) from `0x138000` to
+  `0x200000`.
 - The vBIOS image on this board starts at BAR0 + `0x338000`, not at the aperture
-  base. The `0x338000` head is 99.65% identical between the two cards; 790 bytes
+  base. The `0x338000` head is 99.66% identical between the two cards; 790 bytes
   differ, mostly board metadata.
 - No firmware or ROM dump ships with this repository.
 
@@ -120,7 +164,9 @@ The 2 MiB aperture:
 The four real images are `0x07`/target `0x06`, `0x19`/`0x01`, `0x15`/`0x01`,
 and `0x23`/`0x0E`. The `0x18`/`0x01` and `0x24`/`0x0F` entries point at
 `0xBADF1100` and are placeholders. App `0x23` carries the plaintext data tail
-`0xC8000`–`0xD5A0C`; the other bodies are encrypted throughout.
+`0xC8000`–`0xD5A0C`; the other bodies are encrypted throughout. See the
+[microcode-table
+decode](../../specs/05_vbios-and-devinit.md#microcode-table).
 
 The PLM anchors are owned by app `0x23`/target `0x0E`:
 
@@ -132,32 +178,35 @@ The PLM anchors are owned by app `0x23`/target `0x0E`:
   Ada_FBPA   0xffffff0f  ['app0x23/tgt0x0e']
 ```
 
-## Safety
+Those values are PLM (privilege-level mask) encodings; the [register
+map](../../specs/03_register-map.md#feat-bank) decodes them.
 
-Read through the known-good `0x338000` window. Do not page-scan BAR0
-`0x300000`–`0x400000` while the driver owns the card; a read-only scan there
-coincided with a GSP fault and a required reboot. `prom_read_raw` is safe inside
-the 2 MiB aperture; `vbios_probe`'s range scan is the hazardous call.
+## Safety and access
 
-## Access
-
-Read-only. No register writes. A bad BAR0 page scan can hang the GSP and needs a
-reboot; dumping through the known-good window does not.
+Read-only: no register writes. Read through the known-good `0x338000` window.
+Do not page-scan BAR0 `0x300000`–`0x400000` while the driver owns the card; a
+read-only scan there coincided with a GSP fault and a required reboot, as the
+[memory hazards](../../specs/07_memory-and-host-access.md#bar0-and-bar1) record.
+`prom_read_raw` is safe inside the 2 MiB aperture; `vbios_probe`'s range scan is
+the hazardous call.
 
 ## Terms
 
 - **BDF**: PCI bus/device/function, e.g. `0000:41:00.0`.
 - **PROM aperture**: the 2 MiB flash window at BAR0 + `0x300000`.
-- **ERoT**: external root of trust; the board's SPI security device.
-- **BIT**: BIOS Information Table.
-- **FwSec**: firmware-security image in the PCI ROM chain.
-- **ucode**: Falcon microcode.
-- **PLM**: privilege-level mask; see the [register map](../../specs/03_register-map.md).
+- **PROM head**: the first `0x38000` bytes before the image; `0x1400` starts the
+  encrypted blob.
+- **[BIT](../../specs/05_vbios-and-devinit.md#bit)**: BIOS Information Table.
+- **[FwSec](../../specs/05_vbios-and-devinit.md#pci-image-chain)**: firmware-security
+  image in the PCI ROM chain.
+- **[ucode](../../specs/05_vbios-and-devinit.md#microcode-table)**: Falcon microcode.
+- **PLM**: privilege-level mask; see the [register map](../../specs/03_register-map.md#feat-bank).
 
 ## Related
 
-- [vBIOS experiments (E04, E47, E66)](../../experiments/07_plaintext-corpus.md)
-- [devinit-table experiment (E66)](../../experiments/05_fmc-fsp-boot-inputs.md)
+- [The vBIOS has no FEAT address](../../experiments/07_plaintext-corpus.md#073-the-vbios-has-no-feat-address)
+- [The full PROM has no FEAT table](../../experiments/07_plaintext-corpus.md#079-the-full-prom-has-no-feat-table)
+- [The vBIOS devinit-table scan](../../experiments/05_fmc-fsp-boot-inputs.md#0522-vbios-devinit-table-scan)
 - [vBIOS and devinit spec](../../specs/05_vbios-and-devinit.md)
 - [Register map spec](../../specs/03_register-map.md)
 - [Direct probe](../direct-probe/)

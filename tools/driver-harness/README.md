@@ -1,19 +1,50 @@
 # Driver harness
 
-Instrumented `595.91.07` driver patches and oracle scripts for the RTX 5090
-research. These are research tools, not a supported installer. Every script
-restores the stock DKMS modules on a clean exit; a wedged run may need a reboot.
+## At a glance
 
-The harness does three things:
+- **What it is.** Instrumented `595.91.07` driver patches and oracle scripts for
+  the RTX 5090 research. Research tools, not a supported installer. Every script
+  restores the stock DKMS modules on a clean exit; a wedged run may need a
+  reboot.
+- **Access.** Read/write. Failed boot-input runs can leave the card wedged and
+  need a reboot or cold power cycle.
+- **Requirements.** An exact `NVIDIA open kernel modules` checkout at
+  `595.91.07`, the stock DKMS modules as the recovery path, Secure Boot disabled
+  or the built modules signed, CUDA 13 headers for `cuda_ctx.c`, and
+  `cryptography` for `gen_cot_key.py`.
+- **No firmware ships.** The scripts expect a local driver/firmware package.
 
-- Adds read-only printk and buffer-dump hooks to the open kernel modules so a
-  boot stage can be sampled from inside the driver.
-- Varies one host-built boot field at a time (COT, `WprMeta`, `SRMeta`) and
-  captures the secure firmware response.
-- Drives the PRISCV debug engine and the FB window for read-only inspection.
+**The short version.**
 
-No NVIDIA firmware ships here. The scripts expect a local driver/firmware
-package and an exact `NVIDIA open kernel modules` checkout.
+- The harness adds read-only printk and buffer-dump hooks to the open kernel
+  modules, varies one host-built boot field at a time (COT, `WprMeta`,
+  `SRMeta`), and drives the PRISCV debug engine and FB window.
+- Boot-input oracles return structured FSP/FMC errors; the code table is in
+  [the error spec](../../specs/08_errors-and-logging.md#boot-error-codes).
+- FEAT/PLM scripts sample the rate bank before and after boot and bracket the
+  post-FLR window.
+- Suspend/resume scripts capture `SRMeta` and the saved state; a bad field hangs
+  with no host log.
+- An ICD `STOP` halts GSP-RM, and a BAR1 read can wedge the GPU.
+
+**In this file.**
+
+- [Requirements](#requirements)
+- [Layout](#layout)
+- [Environment](#environment)
+- [Setup and restore](#setup-and-restore)
+- [Boot-input oracles](#boot-input-oracles)
+- [FEAT and PLM](#feat-and-plm)
+- [Suspend/resume](#suspendresume)
+- [PRISCV ICD](#priscv-icd)
+- [Context and FB](#context-and-fb)
+- [GSP logs](#gsp-logs)
+- [COT test key](#cot-test-key)
+- [Inputs and outputs](#inputs-and-outputs)
+- [Access and hazards](#access-and-hazards)
+- [Observed output](#observed-output)
+- [Related](#related)
+- [License](#license)
 
 ## Requirements
 
@@ -24,9 +55,13 @@ package and an exact `NVIDIA open kernel modules` checkout.
 - CUDA 13 headers only for `cuda_ctx.c`.
 - `cryptography` only for `gen_cot_key.py`.
 
-Terms: COT is the chain-of-trust boot message; `WprMeta` and `SRMeta` are the
-256-byte host descriptors; WPR2 is the write-protected firmware reservation; the
-PLM is the per-block privilege mask. The linked specs define each in full.
+Terms: the [COT](../../specs/01_boot-chain.md#cot-v2) is the chain-of-trust boot
+message; [`WprMeta`](../../specs/01_boot-chain.md#wprmeta) and
+[`SRMeta`](../../specs/01_boot-chain.md#suspendresume) are the 256-byte host
+descriptors; [WPR2](../../specs/01_boot-chain.md#terms) is the
+write-protected firmware reservation; the
+[PLM](../../specs/02_privilege-and-rate-control.md#privilege-levels-and-the-plm)
+is the per-block privilege mask. The linked specs define each in full.
 
 ## Layout
 
@@ -92,38 +127,39 @@ export GPU=1
 The scripts that build or load the instrumented tree (`dump_ctx.sh`,
 `bootbuf_dump.sh`, `feat_preboot_flr.sh`, `fb_capture.sh`,
 `gsp_log_capture.sh`) apply their patch, build, load, run and restore in one
-command. They leave the tree changed, so `make clean` before the
-next patch.
+command. They leave the tree changed, so `make clean` before the next patch.
 
-Cold and warm boots matter. A cold power cycle clears WPR2; a warm reboot may
-leave it armed after an authentication failure. Assume one reboot per failed
-run, and use a cold power cycle if WPR2 survives.
+Cold and warm boots matter. A cold power cycle clears
+[WPR2](../../specs/01_boot-chain.md#failure-modes); a warm reboot may leave it
+armed after an authentication failure. Assume one reboot per failed run, and use
+a cold power cycle if WPR2 survives.
 
 ## Boot-input oracles
 
 | Script | What it varies |
 |---|---|
-| `fmc_oracle.sh <0..6> [value]` | COT field: size, offset, boot-args pointer, FMC pointer, hash flip, self-signed key |
-| `wpr_oracle.sh <0..7> [value]` | `WprMeta`: magic, revision, `verified`, `fbSize`, `frtsSize`, `gspFwHeapSize`, `nonWprHeapSize` |
+| `fmc_oracle.sh <0..6> [value]` | [COT](../../specs/01_boot-chain.md#cot-v2) field: size, offset, boot-args pointer, FMC pointer, hash flip, self-signed key |
+| `wpr_oracle.sh <0..7> [value]` | [`WprMeta`](../../specs/01_boot-chain.md#wprmeta): magic, revision, `verified`, `fbSize`, `frtsSize`, `gspFwHeapSize`, `nonWprHeapSize` |
 | `wpr_verified_patch_test.sh` | Patched GSP-RM image plus preset `verified` |
 | `run_gsp_patch_test.sh` | One-instruction GSP-RM patch, rejected by the FMC |
 | `bootbuf_dump.sh` | Dumps the host `GspRmBoot` buffer pre-COT and post-boot |
 | `boot_tamper_run.sh [off] [xor]` | Flips one ciphertext byte of `GspRmBoot` |
 | `fmc_buffer_probe.sh dump` | Reads the host FMC container at copy, postsend and release |
-| `fmc_buffer_probe.sh tamper <1|2|3>` | Flips a body byte, body-size field or header magic; the observed refusal is `0x33` |
+| `fmc_buffer_probe.sh tamper <1\|2\|3>` | Flips a body byte, body-size field or header magic; the observed refusal is [`0x33`](../../specs/08_errors-and-logging.md#boot-error-codes) |
 
 Fields 0 clear any override and leave the boot stock. Values are C integer
 literals. Every failure leaves a `dmesg` line with a `Fatal GSP-FMC Error` code;
-the code table is in [the error spec](../../specs/08_errors-and-logging.md).
+the code table is in [the error
+spec](../../specs/08_errors-and-logging.md#boot-error-codes).
 
 ## FEAT and PLM
 
 | Script | What it does |
 |---|---|
-| `feat_preboot.sh` | Samples the FEAT bank before the COT and after GSP-RM in one boot |
-| `feat_preboot_flr.sh [bdf]` | Brackets the PLM re-lock across an FLR and the first open |
+| `feat_preboot.sh` | Samples the [FEAT bank](../../specs/03_register-map.md#feat-bank) before the COT and after GSP-RM in one boot |
+| `feat_preboot_flr.sh [bdf]` | Brackets the [PLM](../../specs/02_privilege-and-rate-control.md#privilege-levels-and-the-plm) re-lock across an FLR and the first open |
 | `featbank_writer_probe.sh selftest\|snapshot\|watch\|flr\|boot-install\|boot-collect\|boot-status\|boot-uninstall` | Read-only bank sampler; the boot units sample before the driver binds |
-| `plm_window_race.sh measure\|benign\|payload [bdf]` | Measures the post-FLR L2 window and optionally races a write |
+| `plm_window_race.sh measure\|benign\|payload [bdf]` | Measures the [post-FLR L2 window](../../specs/02_privilege-and-rate-control.md#privilege-levels-and-the-plm) and optionally races a write |
 | `regkey_rate_sweep.sh [--dry-run\|--only <name>\|--restore]` | One registry key per stock-driver reload |
 
 `featbank_writer_probe.sh boot-install` installs systemd units that sample
@@ -134,8 +170,8 @@ samples, then run `boot-collect`.
 
 | Script | What it does |
 |---|---|
-| `sr_resume_test.sh` | Forces `pm_test=devices` and captures the stock `SRMeta` |
-| `sr_oracle.sh <0..5> [value]` | Varies `SRMeta` magic, revision, size, radix3 pointer or flags |
+| `sr_resume_test.sh` | Forces `pm_test=devices` and captures the stock [`SRMeta`](../../specs/01_boot-chain.md#suspendresume) |
+| `sr_oracle.sh <0..5> [value]` | Varies [`SRMeta`](../../specs/01_boot-chain.md#suspendresume) magic, revision, size, radix3 pointer or flags |
 | `sr_dump_test.sh` | Dumps the suspend state through the host-built radix3 |
 
 The trigger is:
@@ -170,9 +206,10 @@ icd_halt_probe <bdf>
 icd_bootimg_probe <bdf> [dumpfile]
 ```
 
-`icd_halt_probe` and `icd_bootimg_probe` issue `STOP`; the GSP halts and the
-card needs a reboot. `icd_cmd` and `icd_rdm` only latch addresses and issue one
-command.
+`icd_halt_probe` and `icd_bootimg_probe` issue
+[`STOP`](../../specs/06_gsp-riscv-and-priscv.md#icd-command-engine); the GSP
+halts and the card needs a reboot. `icd_cmd` and `icd_rdm` only latch addresses
+and issue one command.
 
 The wrapper scripts add sweeps and boot-window traces:
 `icd_probe2.sh`, `icd_rstat_probe.sh`, `icd_rdm_probe.sh`, `icd_map_probe.sh`,
@@ -194,16 +231,21 @@ python3 -I ./analyze_crosscard.py runs/ctxdump_<stamp>
 ```
 
 `fb_capture.sh` reads FB through the BAR0 PRAMIN window after GSP-RM is up.
-`fb_peek.py` reads through BAR1; it is read-only but a BAR1 read can wedge the
-GSP. The BAR0 window is the working path; the WPR range returns the
-access-denied fill.
+`fb_peek.py` reads through BAR1; it is read-only but a
+[BAR1 read](../../specs/07_memory-and-host-access.md#bar0-and-bar1) can wedge
+the GSP. The BAR0 window is the working path; the WPR range returns the
+[access-denied fill](../../specs/07_memory-and-host-access.md#host-fb-reads-and-the-wpr).
 
 ## GSP logs
 
 `gsp_log_capture.sh` loads the instrumented modules, triggers a few RM queries,
-unloads to fire the log hook, and writes the raw rings to `runs/gsplog/`.
-The decoder lives in [GSP-RM tools](../gsp-rm-tools/). Message text and
-severity need the logging metadata file; the function-level trace does not.
+unloads to fire the log hook, and writes the raw rings to `runs/gsplog/`. The
+decoder lives in [GSP-RM tools](../gsp-rm-tools/). Message text and severity
+need the logging metadata file; the function-level trace does not. See
+[the GSP log ring
+format](../../specs/08_errors-and-logging.md#gsp-log-ring-format) and
+[what the decoder
+recovers](../../specs/08_errors-and-logging.md#what-the-decoder-recovers).
 
 ## COT test key
 
@@ -231,13 +273,20 @@ it into the run directory. Kernel logs go to `dmesg` or the journal.
 
 Most scripts read and write. Treat every run as one that may need a reboot:
 
-- A refused COT hash, key or container leaves WPR2 armed; retries fail until a
+- A refused COT hash, key or container leaves
+  [WPR2](../../specs/01_boot-chain.md#failure-modes) armed; retries fail until a
   reboot or cold power cycle.
-- A `gspFwHeapSize` below GSP-RM's minimum applies the layout and then wedges.
-- A bad `SRMeta` field hangs the resume with no host log.
-- `STOP` through the ICD halts GSP-RM; the card needs a reset.
-- A BAR1 read can wedge the GSP; use the BAR0 PRAMIN window where possible.
-- Do not page-scan the BAR0 flash aperture while the driver owns the card.
+- A [`gspFwHeapSize`](../../specs/01_boot-chain.md#wprmeta) below GSP-RM's
+  minimum applies the layout and then wedges.
+- A bad [`SRMeta`](../../specs/01_boot-chain.md#suspendresume) field hangs the
+  resume with no host log.
+- [`STOP`](../../specs/06_gsp-riscv-and-priscv.md#icd-command-engine) through the
+  ICD halts GSP-RM; the card needs a reset.
+- A [BAR1 read](../../specs/07_memory-and-host-access.md#bar0-and-bar1) can
+  wedge the GSP; use the BAR0 PRAMIN window where possible.
+- Do not page-scan the [BAR0 flash
+  aperture](../../specs/07_memory-and-host-access.md#bar0-and-bar1) while the
+  driver owns the card.
 
 ## Observed output
 
@@ -290,15 +339,17 @@ WPR read through the BAR0 window:
 
 ## Related
 
-- Experiments: [register writes](../../experiments/01_software-register-writes.md),
-  [FECS and context](../../experiments/03_fecs-and-gr-context.md),
-  [secure memory](../../experiments/04_hs-sec2-fsp-memory.md),
-  [boot inputs](../../experiments/05_fmc-fsp-boot-inputs.md),
-  [suspend/resume](../../experiments/06_sr-resume.md),
-  [cross-checks](../../experiments/08_assessment-and-cross-checks.md).
-- Specs: [boot chain](../../specs/01_boot-chain.md),
-  [memory and host access](../../specs/07_memory-and-host-access.md),
-  [errors and logging](../../specs/08_errors-and-logging.md).
+- Experiments:
+  - [the PL2 write test](../../experiments/01_software-register-writes.md#012-speed-register-write-from-gsp-is-dropped)
+    and [the post-FLR window](../../experiments/01_software-register-writes.md#016-the-post-reset-window-closes-before-gsp-rm)
+  - [the GR context dumps](../../experiments/03_fecs-and-gr-context.md#034-first-live-gr-context-buffer-dump)
+  - [the live ICD](../../experiments/04_hs-sec2-fsp-memory.md#044-priscv-icd-is-a-live-debug-port)
+  - [the boot-input baseline](../../experiments/05_fmc-fsp-boot-inputs.md#053-boot-input-baseline-and-the-ordinary-fmc-path)
+  - [the host-driven SR cycle](../../experiments/06_sr-resume.md#061-the-suspend-and-resume-cycle-is-host-driven)
+  - [the same-boot two-card probe](../../experiments/08_assessment-and-cross-checks.md#083-same-boot-two-card-issue-rate-probe)
+- Specs: [boot chain](../../specs/01_boot-chain.md#at-a-glance),
+  [WPR and FRTS layout](../../specs/07_memory-and-host-access.md#wpr-and-frts-layout),
+  [boot error codes](../../specs/08_errors-and-logging.md#boot-error-codes).
 - Sibling tools: [register access](../register-access/),
   [FMC tools](../fmc-tools/), [boot tests](../boot-tests/).
 

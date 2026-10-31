@@ -161,7 +161,7 @@ publickey[97] || pad[7] || signature[96] || hash[48] || container
 |---|---|
 | `publickey[97]` | Uncompressed P-384 point |
 | `pad[7]` | Alignment |
-| `signature[96]` | `r || s`, 48 bytes each |
+| `signature[96]` | `r \|\| s`, 48 bytes each |
 | `hash[48]` | SHA-384 over the entire container, header included |
 
 The encoding is ECDSA P-384 over SHA-384. Both shipped signatures verify with

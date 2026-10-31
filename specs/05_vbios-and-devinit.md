@@ -116,8 +116,8 @@ and [the devinit scan](../experiments/05_fmc-fsp-boot-inputs.md#0522-vbios-devin
 | `0x19` | `0x01` | 6 | yes | `0x90040`–`0xB1B40` |
 | `0x15` | `0x01` | 6 | yes | `0xB1C80`–`0xB7780` |
 | `0x23` | `0x0E` | 6 | yes | `0xB780C`–`0xD5A0C` |
-| `0x18` | `0x01` | n/a |; | Placeholder; descriptor `0xBADF1100` |
-| `0x24` | `0x0F` | n/a |; | Placeholder; descriptor `0xBADF1100` |
+| `0x18` | `0x01` | n/a | n/a | Placeholder; descriptor `0xBADF1100` |
+| `0x24` | `0x0F` | n/a | n/a | Placeholder; descriptor `0xBADF1100` |
 
 All four real descriptors are version 6, size `0x50`, with the encrypted bit set.
 The bodies begin with encrypted code, entropy 8.0. Only app `0x23` / target `0x0E`

@@ -1,11 +1,43 @@
 # Issue-rate probe
 
-A register-resident tensor-core probe for `sm_120` (RTX 5090). It measures the
-instruction issue rate of the FP32-accumulate path without memory traffic: every
-input is exactly one, each warp keeps eight accumulator chains in flight, and
-the kernel validates every output cell against the expected sum.
+## At a glance
 
-Modes:
+- **What it measures.** The tensor-core issue rate of the FP32-accumulate path
+  on `sm_120` (RTX 5090), with no memory traffic. Every input is exactly one,
+  each warp keeps eight accumulator chains in flight, and every output cell is
+  validated against the expected sum.
+- **Access.** Read/write. The plain runner reads telemetry; with `--reg-offset`
+  it writes a BAR0 register. The modifier wrapper writes `0x504204` and
+  restores 5.
+- **Requirements.** A live RTX 5090 (`sm_120`) and CUDA 13. No firmware, dumps,
+  or proprietary images.
+
+**The short version.**
+
+- Four modes: FP16→FP32, BF16→FP32, TF32→FP32, and U4→S32.
+- It measures issue rate, not GEMM throughput. The two-card run is [the
+  same-boot issue-rate
+  probe](../../experiments/08_assessment-and-cross-checks.md#083-same-boot-two-card-issue-rate-probe).
+- There is no FP16-accumulate mode here, so the local cap ratio is inferred from
+  the external full-rate number and the local FP32-accumulate baseline; see
+  [the cap section](../../specs/02_privilege-and-rate-control.md#the-cap-is-product-segmentation).
+- `SM_ISSUE_RATE_MODIFIER` (`0x504204`) is writable but reasserted and inert.
+  Holding it at 0 does not move the measured rate; see [the modifier
+  test](../../experiments/01_software-register-writes.md#014-the-fuse-shadow-and-the-inert-modifier).
+
+**In this file.**
+
+- [Modes](#modes)
+- [Layout](#layout)
+- [Build](#build)
+- [Run](#run)
+- [Inputs](#inputs)
+- [Output](#output)
+- [Access](#access)
+- [Related](#related)
+- [License](#license)
+
+## Modes
 
 | Mode | Instruction | Accumulator |
 |---|---|---|
@@ -16,7 +48,7 @@ Modes:
 
 There is no FP16-accumulate mode here. The local cap ratio is therefore inferred
 from the external full-rate number and the local FP32-accumulate baseline; see
-[the privilege and rate-control spec](../../specs/02_privilege-and-rate-control.md).
+[the cap section](../../specs/02_privilege-and-rate-control.md#the-cap-is-product-segmentation).
 
 ## Layout
 
@@ -25,7 +57,7 @@ from the external full-rate number and the local FP32-accumulate baseline; see
 | `tensor_modes_issue_sm120.cu` | Four device kernels, one per mode |
 | `build_ptx.py` | Compiles the `.cu` to PTX through NVRTC |
 | `tensor_modes_driver_runner.py` | Loads a hash-pinned cubin through the CUDA Driver API, runs each mode, validates cells, records telemetry |
-| `run_modifier_test.sh` | Sets `SM_ISSUE_RATE_MODIFIER=0`, runs the probe, reads back, restores 5 |
+| `run_modifier_test.sh` | Sets [`SM_ISSUE_RATE_MODIFIER`](../../specs/02_privilege-and-rate-control.md#the-rm-getter-and-the-host-view)=0, runs the probe, reads back, restores 5 |
 
 ## Build
 
@@ -62,9 +94,10 @@ sudo UUID=<uuid> BDF=0000:41:00.0 GPU=1 ./run_modifier_test.sh
 ```
 
 The wrapper builds the register path from `../register-access/regops`, sets
-`0x504204=0`, runs the probe with the register poked after `cuCtxCreate` and
-before every launch, reads it back, and restores `5`. `HASH`, `BDF`, `GPU`, `REG`,
-and `POWER_LIMIT` can be overridden through the environment.
+[`0x504204`](../../specs/02_privilege-and-rate-control.md#the-rm-getter-and-the-host-view)=0,
+runs the probe with the register poked after `cuCtxCreate` and before every
+launch, reads it back, and restores `5`. `HASH`, `BDF`, `GPU`, `REG`, and
+`POWER_LIMIT` can be overridden through the environment.
 
 ## Inputs
 
@@ -109,8 +142,10 @@ Expected ranges at stock clocks, from the experiments:
 The two-card run measured 226.6 / 229.6 TF/s on the FP32-accumulate path, with
 all four modes agreeing within 0.23% per clock. The small differences above are
 run-to-run clock variance. Each mode checks 270,336 cells and expects zero
-mismatches; see [E12](../../experiments/01_software-register-writes.md) and
-[E49](../../experiments/08_assessment-and-cross-checks.md).
+mismatches; see [the two-card issue-rate
+run](../../experiments/08_assessment-and-cross-checks.md#083-same-boot-two-card-issue-rate-probe)
+and [the modifier
+test](../../experiments/01_software-register-writes.md#014-the-fuse-shadow-and-the-inert-modifier).
 
 ## Access
 
@@ -120,10 +155,10 @@ normal use, but any blind register write on a live GPU can require a reboot.
 
 ## Related
 
-- [Register-write experiments](../../experiments/01_software-register-writes.md) — E12, E49
-- [Assessment and cross-checks](../../experiments/08_assessment-and-cross-checks.md) — E49
-- [Privilege and rate control](../../specs/02_privilege-and-rate-control.md) — selector chain and cap
-- [Register access](../register-access/) — the `regops` client used by the wrapper
+- [The modifier test](../../experiments/01_software-register-writes.md#014-the-fuse-shadow-and-the-inert-modifier)
+- [The two-card issue-rate run](../../experiments/08_assessment-and-cross-checks.md#083-same-boot-two-card-issue-rate-probe)
+- [The cap and selector chain](../../specs/02_privilege-and-rate-control.md#the-cap-is-product-segmentation)
+- [Register access](../register-access/): the `regops` client used by the wrapper
 
 ## License
 

@@ -1,8 +1,41 @@
 # GSP-RM tools
 
-Ghidra 12.2 helpers, a raw reference scanner, a module splitter, and an offline
-decoder for the GSP-RM log rings. Everything works on the plaintext `gsp_ga10x.bin`
-image, so none of it needs the GPU to be running.
+## At a glance
+
+- **What it does.** Ghidra 12.2 helpers, a raw reference scanner, a module
+  splitter, and an offline decoder for the GSP-RM log rings.
+- **Access.** Offline. It reads local files and writes local generated tables;
+  no GPU, driver, or register access.
+- **Inputs.** Your own extracted `gsp_ga10x.bin`; no firmware is shipped.
+
+**The short version.**
+
+- The [GSP-RM image](../../specs/04_firmware-formats.md#gsp-rm-image) is the
+  `.fwimage` section at file offset `0x40`, `72,830,976` bytes.
+- Ghidra imports it at base `0x01000000`; the helpers decompile and disassemble
+  by virtual address ([address model](../../specs/04_firmware-formats.md#address-model)).
+- `refscan.py` finds raw RISC-V references that a Ghidra reference list can miss.
+- `module_split_v2.py` splits the decompiled dump into module files
+  ([module map](../../specs/04_firmware-formats.md#module-map)).
+- The decoder recovers a function-level trace without the missing logging ELF
+  ([log ring format](../../specs/08_errors-and-logging.md#gsp-log-ring-format),
+  [what the decoder recovers](../../specs/08_errors-and-logging.md#what-the-decoder-recovers)).
+
+**In this file.**
+
+- [Layout](#layout)
+- [Inputs](#inputs)
+- [Ghidra setup](#ghidra-setup)
+- [Reference scanner](#reference-scanner)
+- [Module splitter](#module-splitter)
+- [Log decoder](#log-decoder)
+  - [Record format](#record-format)
+  - [Task bases](#task-bases)
+  - [Build the ID table](#build-the-id-table)
+  - [Decode](#decode)
+  - [Capture](#capture)
+- [Access](#access)
+- [Related](#related)
 
 ## Layout
 
@@ -26,9 +59,11 @@ image, so none of it needs the GPU to be running.
 
 You need three local inputs. None of them are shipped here.
 
-1. `gsp_ga10x.bin` from your driver package. The `.fwimage` section is at file
-   offset `0x40` and is `72,830,976` bytes.
-2. A decompiled C dump of that image, produced by Ghidra at base `0x01000000`.
+1. `gsp_ga10x.bin` from your driver package. The
+   [`.fwimage` section](../../specs/04_firmware-formats.md#gsp-rm-image) is at
+   file offset `0x40` and is `72,830,976` bytes.
+2. A decompiled C dump of that image, produced by Ghidra at base `0x01000000`
+   ([address model](../../specs/04_firmware-formats.md#address-model)).
    `DecompileAll.java` writes it.
 3. A module directory from `module_split_v2.py`. The ID table builder uses it for
    module names.
@@ -80,8 +115,9 @@ Expected output for the two registry strings:
 0x015cf1ea  auipc+addi -> 0x01f3a970
 ```
 
-The same scan is used to find the five materializations of the FEAT decoder and
-the indirect-call slot loads. Raw literals and `lui+addi` forms are included;
+The same scan is used to find the five materializations of the
+[FEAT decoder](../../experiments/07_plaintext-corpus.md#078-the-decoder-is-installed-by-the-hal)
+and the indirect-call slot loads. Raw literals and `lui+addi` forms are included;
 do not conclude "unreferenced" from a Ghidra reference list alone.
 
 ## Module splitter
@@ -94,16 +130,19 @@ python3 -I module_split_v2.py \
 
 It needs `networkx`. The result is one C file per module plus an index and a
 summary. On the 595.91.07 image the split covers `22,941` functions in `69`
-modules; `feat_rate` is empty, which is itself a useful negative result.
+modules; `feat_rate` is empty, which is itself a useful negative result
+([module map](../../specs/04_firmware-formats.md#module-map)).
 
 `module_split.py` is the earlier, simpler splitter and takes explicit
 `--input`/`--outdir` arguments.
 
 ## Log decoder
 
-GSP-RM writes per-task log rings into host-allocated cached sysmem. The decoder
-recovers a function-level trace without `gsp_log_ga10x.bin`, the logging ELF
-that NVIDIA does not ship.
+GSP-RM writes per-task log rings into host-allocated cached sysmem
+([log ring format](../../specs/08_errors-and-logging.md#gsp-log-ring-format)).
+The decoder recovers a function-level trace without `gsp_log_ga10x.bin`, the
+logging ELF that NVIDIA does not ship
+([decoder coverage](../../specs/08_errors-and-logging.md#what-the-decoder-recovers)).
 
 ### Record format
 
@@ -118,6 +157,8 @@ meta         47:0  metadata VA - per-task base
 ```
 
 The metadata word is second-to-last. `N = argumentCount + 2`.
+[The log-ring spec](../../specs/08_errors-and-logging.md#gsp-log-ring-format)
+has the full field map.
 
 ### Task bases
 
@@ -165,15 +206,16 @@ Example text output:
 ```
 
 A live capture of both cards produced `173` records per card with identical
-`(task, ID, argc)` sequences; `141/173` resolve to a function. The decoder
-cannot recover RM/INIT format strings, source lines, or severity without the
-logging metadata; the early writer's `31` literal fallbacks are recovered exactly
-by `build_init_strings.py`.
+`(task, ID, argc)` sequences; `141/173` resolve to a function
+([live capture](../../experiments/08_assessment-and-cross-checks.md#088-live-gsp-log-capture-and-decode)).
+The decoder cannot recover RM/INIT format strings, source lines, or severity
+without the logging metadata; the early writer's `31` literal fallbacks are
+recovered exactly by `build_init_strings.py`.
 
 ### Capture
 
 The ring buffers are ordinary sysmem. Use the instrumented driver in
-[the driver harness](../../tools/driver-harness/) to dump them at unload, then point the
+[the driver harness](../driver-harness/) to dump them at unload, then point the
 decoder at the manifest. The manifest format is:
 
 ```json
@@ -196,9 +238,11 @@ files and writes local generated tables.
 
 - [FECS and GR context experiments](../../experiments/03_fecs-and-gr-context.md)
 - [HS / SEC2 / FSP memory experiments](../../experiments/04_hs-sec2-fsp-memory.md)
-- [Firmware and vBIOS corpus](../../experiments/07_plaintext-corpus.md)
-- [Assessment and cross-checks](../../experiments/08_assessment-and-cross-checks.md)
+- [The FEAT decoder](../../experiments/07_plaintext-corpus.md#078-the-decoder-is-installed-by-the-hal)
+- [The FMC key search](../../experiments/07_plaintext-corpus.md#0710-the-fmc-key-search-comes-back-negative)
+- [Live GSP log capture](../../experiments/08_assessment-and-cross-checks.md#088-live-gsp-log-capture-and-decode)
+- [Sentinel analysis](../../experiments/08_assessment-and-cross-checks.md#089-sentinel-and-raw-function-analysis)
 - [Firmware formats](../../specs/04_firmware-formats.md)
 - [Errors and logging](../../specs/08_errors-and-logging.md)
-- [Driver harness](../../tools/driver-harness/)
-- [FMC tools](../../tools/fmc-tools/)
+- [Driver harness](../driver-harness/)
+- [FMC tools](../fmc-tools/)

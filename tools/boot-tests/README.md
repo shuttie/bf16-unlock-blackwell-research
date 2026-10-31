@@ -1,29 +1,65 @@
-# Boot tests
+# Boot tests: registry-key boot paths
 
-Registry-key boot-path experiments for GB202. Each run reloads the NVIDIA driver
-with one `NVreg_RegistryDwords` value, records what the GSP boot path did, and
-restores the stock driver before the next variant. Nothing is persisted: the key
-is passed on the modprobe command line only.
+## At a glance
+
+- **What it does.** Reloads the NVIDIA driver with one `NVreg_RegistryDwords`
+  value at a time, records what the GSP boot path did, and restores the stock
+  driver before the next variant.
+- **Access.** Read/write. It reloads drivers and changes boot-path inputs; it can
+  hang the card and require a reboot.
+- **Requirements.** A live GB202 card, root, the stock driver loaded, and no
+  compute processes using the GPU.
+
+**The short version.**
+
+- The script exercises three controls: `RmDisableCotCmd`, a bitfield for FRTS
+  placement and the host-driven FMC bootstrap; `RmDisableFspFuseErrorCheck`; and
+  `RmDisableFsp`, a negative control.
+- The FMC answers with a structured error report. `0x83d` means the FRTS region
+  was withheld.
+- The GSPFMC variant deadlocks by design and leaves an ioctl blocked forever.
+  Treat it as one-shot.
+- The harness unloads the NVIDIA modules, captures the dmesg delta before any
+  health check, and restores the stock driver in an `EXIT` trap.
+
+**In this file.**
+
+- [What it does](#what-it-does)
+- [Layout](#layout)
+- [Build](#build)
+- [Run](#run)
+- [Inputs](#inputs)
+- [Outputs](#outputs)
+- [Hazards](#hazards)
+- [Access](#access)
+- [Related](#related)
 
 ## What it does
 
-The script exercises three controls:
+The three keys are the boot-input controls measured in [02.2 Boot-input keys
+change what the FMC
+receives](../../experiments/02_registry-and-static-audit.md#022-boot-input-keys-change-what-the-fmc-receives).
 
-- `RmDisableCotCmd` is a bitfield: FRTS sysmem in bits 1:0 (`0x1`), FRTS vidmem
-  in bits 3:2 (`0x4`), and the host-driven FMC bootstrap (GSPFMC) in bits 5:4
-  (`0x10`).
+- `RmDisableCotCmd` is a bitfield: [FRTS](../../specs/01_boot-chain.md#cot-v2)
+  sysmem in bits 1:0 (`0x1`), FRTS vidmem in bits 3:2 (`0x4`), and the
+  host-driven FMC bootstrap ([GSPFMC](../../specs/01_boot-chain.md#sec2)) in bits
+  5:4 (`0x10`).
 - `RmDisableFspFuseErrorCheck=1` disables the FSP fuse-error check.
 - `RmDisableFsp=1` is honoured only in emulation, so it is a negative control.
 
-The FMC answers with a structured report:
+The FMC answers with a [structured
+report](../../specs/08_errors-and-logging.md#boot-error-codes):
 
 ```text
 Fatal GSP-FMC Error: version=0x1, partition=0x1, error code=0x83d, additional info=0x0
 ```
 
+[`0x83d`](../../specs/08_errors-and-logging.md#boot-error-codes) is the
+FRTS-withheld error.
+
 ## Layout
 
-- `gsp_bootpath_tests.sh` — the harness.
+- `gsp_bootpath_tests.sh`: the harness.
 
 ## Build
 
@@ -40,8 +76,8 @@ sudo ./gsp_bootpath_tests.sh --restore          # unload and reload stock
 
 Environment:
 
-- `BASELINE_GPUS` — expected visible GPU count; default `2`.
-- `OUTDIR` — where the run log is written; default is the script directory.
+- `BASELINE_GPUS`: expected visible GPU count; default `2`.
+- `OUTDIR`: where the run log is written; default is the script directory.
 
 The harness unloads `nvidia_drm`, `nvidia_modeset`, `nvidia_uvm`, and `nvidia`,
 captures the dmesg delta before any health check, and restores the stock driver
@@ -77,8 +113,10 @@ Max GSP-RM boot attempts exceeded: 4/4
 kgspResetHw_GB100: Timed out waiting for GSP reset PLM to be lowered
 ```
 
-  In that state the host cannot read `0x1103c0`: it returns `0xBADF5720`, while
-  the GSP sees `0x00000200`.
+  In that state the host cannot read
+  [`0x1103c0`](../../specs/03_register-map.md#gsp-falcon): it returns
+  [`0xBADF5720`](../../specs/08_errors-and-logging.md#data-sentinels-and-bad-reads),
+  while the GSP sees `0x00000200`.
 
 - FRTS sysmem withheld (`RmDisableCotCmd=0x1`) boots normally.
 
@@ -88,6 +126,9 @@ kgspResetHw_GB100: Timed out waiting for GSP reset PLM to be lowered
 _kgspBootGspRm: unexpected WPR2 already up, cannot proceed with booting GSP
 RmInitAdapter failed! (0x62:0x40:2168)
 ```
+
+  [`0x62`](../../specs/08_errors-and-logging.md#nv-status-codes) is
+  `NV_ERR_RESET_REQUIRED`.
 
 ## Hazards
 
@@ -100,7 +141,8 @@ pins the module. The harness uses `timeout -s KILL` and `pkill -9 -x nvidia-smi`
 for that reason.
 
 If the driver does not come back after a variant, reboot. A warm reboot may not
-clear WPR2; use a cold power cycle if it does not.
+clear [WPR2](../../specs/01_boot-chain.md#terms); use a cold power cycle if it
+does not.
 
 ## Access
 
@@ -109,7 +151,9 @@ the card and require a reboot.
 
 ## Related
 
-- [Registry and static audit](../../experiments/02_registry-and-static-audit.md) — E11 measured these variants.
-- [Boot chain](../../specs/01_boot-chain.md) — COT and WprMeta fields.
-- [Errors and logging](../../specs/08_errors-and-logging.md) — the error codes above.
-- [Driver harness](../driver-harness/) — the instrumented-driver oracles.
+- [Boot-input keys](../../experiments/02_registry-and-static-audit.md#022-boot-input-keys-change-what-the-fmc-receives):
+  the measured variants.
+- [Boot chain](../../specs/01_boot-chain.md): COT and `WprMeta` fields.
+- [Errors and logging](../../specs/08_errors-and-logging.md): the error codes
+  above.
+- [Driver harness](../driver-harness/): the instrumented-driver oracles.

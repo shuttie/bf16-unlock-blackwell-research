@@ -1,11 +1,49 @@
 # FMC tools
 
-Offline tools for the GB202 FMC and GspRmBoot containers: extract them, verify
-their P-384 signatures, and search the 16! permutation key space against the
-public known-answer test and two container oracles.
+## At a glance
 
-No firmware is shipped here. The containers and the GSP-RM image are inputs you
-extract from your own driver package.
+- **What it does.** Extracts GB202 FMC and GspRmBoot containers, verifies their
+  P-384 signatures, and searches the 16! permutation key space against the
+  public known-answer test and two container oracles.
+- **Access.** Offline. The CUDA paths use the GPU for compute only; nothing
+  writes a GPU register or needs root.
+- **Inputs.** Your own driver package: the FMC containers and the GSP-RM
+  `.fwimage`. No firmware ships here.
+- **Outputs.** `out/` by default. No containers, firmware, or recovered keys are
+  included.
+
+**The short version.**
+
+- The [FMC container](../../specs/04_firmware-formats.md#fmc-container) is a
+  `0x48`-byte plaintext header plus an encrypted body. The body is
+  `[code][data][manifest 0xA00]`
+  ([body layout](../../specs/04_firmware-formats.md#body-layout)).
+- A signed container is preceded by a
+  [`0xF8`-byte envelope](../../specs/04_firmware-formats.md#signature-envelope):
+  `publickey[97] || pad[7] || signature[96] || hash[48]`, P-384/SHA-384.
+- [`GspRmBoot`](../../specs/04_firmware-formats.md#gsprmboot) is a raw
+  `0x47000`-byte blob in the driver bindata: manifest at 0, data at `0xA00`,
+  code at `0xF200`.
+- The 16! search over the
+  [published key family](../../specs/04_firmware-formats.md#the-published-test-key-family)
+  is [negative](../../experiments/07_plaintext-corpus.md#0710-the-fmc-key-search-comes-back-negative)
+  under ECB, CBC, and CTR. No key was recovered.
+- The first-block magic filter was the wrong oracle for a code-first body
+  ([why it was wrong](../../specs/04_firmware-formats.md#why-the-first-block-magic-filter-was-wrong)).
+  Use `fmc_riscv_verify.py` for any new hit.
+
+**In this file.**
+
+- [Layout](#layout)
+- [Extract the containers](#extract-the-containers)
+- [Build](#build)
+- [Run](#run)
+- [Expected results](#expected-results)
+- [Inputs and outputs](#inputs-and-outputs)
+- [Access](#access)
+- [Limits](#limits)
+- [Related](#related)
+- [License](#license)
 
 ## Layout
 
@@ -25,9 +63,10 @@ extract from your own driver package.
 
 ## Extract the containers
 
-The FMC container is a `0x48`-byte plaintext header followed by an encrypted
-body. The header starts with the magic `03 04 48 00`; a container is
-`0x48 + u32@+4` bytes long.
+The [FMC container](../../specs/04_firmware-formats.md#fmc-container) is a
+`0x48`-byte plaintext header followed by an encrypted body. The
+[header](../../specs/04_firmware-formats.md#header) starts with the magic
+`03 04 48 00`; a container is `0x48 + u32@+4` bytes long.
 
 ```python
 import struct, sys
@@ -49,11 +88,14 @@ Header fields used by the tools:
 | `0x18` | flags / version |
 | `0x20` | constant `0x2801` |
 
-The body is `[code][data][manifest 0xA00]`. The matching GspRmBoot image is a
-raw `0x47000`-byte blob in the driver bindata: manifest at 0, data at `0xA00`,
-code at `0xF200`.
+The body is `[code][data][manifest 0xA00]`
+([body layout](../../specs/04_firmware-formats.md#body-layout)). The matching
+[`GspRmBoot`](../../specs/04_firmware-formats.md#gsprmboot) image is a raw
+`0x47000`-byte blob in the driver bindata: manifest at 0, data at `0xA00`, code
+at `0xF200`.
 
-A signed container is preceded by `0xF8` bytes:
+A signed container is preceded by a
+[`0xF8`-byte envelope](../../specs/04_firmware-formats.md#signature-envelope):
 `publickey[97] || pad[7] || signature[96] || hash[48]`. The key is an
 uncompressed P-384 point, the signature is `r || s`, and the hash is SHA-384
 over the whole container including its header.
@@ -88,7 +130,8 @@ $CUDA_HOME/bin/nvcc -O3 -arch=sm_120 -U_GNU_SOURCE \
 Python helpers need `cryptography`; the structured searches also need
 `pycryptodome`.
 
-The RISC-V table is built from the plaintext GSP-RM code segment:
+The RISC-V table is built from the plaintext
+[GSP-RM code segment](../../specs/04_firmware-formats.md#gsp-rm-image):
 
 ```text
 python3 build_riscv_logp.py --fw gsp_fwimage.bin --out riscv_logp_q.bin
@@ -146,13 +189,15 @@ The runners default to `key37_cuda` and `containers/` beside the script; set
 
 ## Expected results
 
-The public control is:
+The [public control](../../specs/04_firmware-formats.md#the-published-test-key-family)
+is:
 
 ```text
 AES-128-ECB(K, 00 * 16) = 717d1494eaca317ff106195258b38377
 ```
 
-The corrected 16! passes are all negative:
+The corrected 16! passes are all
+[negative](../../experiments/07_plaintext-corpus.md#0710-the-fmc-key-search-comes-back-negative):
 
 | Pass | Result |
 |---|---|
@@ -166,7 +211,8 @@ The corrected 16! passes are all negative:
 
 The debug FMCs are not decrypted by any MD5-IV permutation under ECB,
 per-component CBC with a zero or header IV, or CTR with counter start 0 or 1.
-No key was recovered.
+No key was recovered. See
+[what decryption would buy](../../specs/04_firmware-formats.md#what-decryption-buys).
 
 Reference rates on two 5090s: about 23.6 G keys/s per card for the zero/FF KAT,
 10.2 G/s for the first-block oracle, 8.5 G/s for the three-hypothesis RISC-V
@@ -175,9 +221,11 @@ oracle, and 5.5 G/s sustained for the five-mode RISC-V oracle.
 ## Inputs and outputs
 
 - Containers: from your own driver package; place them in `containers/` or set
-  `FMC_CONTAINERS`.
+  `FMC_CONTAINERS`. The format is in
+  [Firmware formats](../../specs/04_firmware-formats.md#fmc-container).
 - GSP-RM code segment: the `.fwimage` section of `gsp_ga10x.bin`, 72,830,976
-  bytes at file offset `0x40`; set `FWIMAGE`.
+  bytes at file offset `0x40`; set `FWIMAGE`. See the
+  [GSP-RM image](../../specs/04_firmware-formats.md#gsp-rm-image).
 - Outputs: `out/` by default; `FMC_OUT` overrides the decryption directory.
 - Nothing here writes to a GPU register. The CUDA paths need a GPU, but only
   for compute; the CPU path needs no device.
@@ -191,13 +239,15 @@ register or needs root.
 
 The key/mode question is not solved: the IV-permutation family is exhausted
 under the tested modes, and the key source is unknown. The first-block magic
-filter used in the early passes was the wrong oracle for a code-first body; use
-`fmc_riscv_verify.py` for any new hit. No containers, firmware, or recovered
+filter used in the early passes was the wrong oracle for a code-first body
+([why](../../specs/04_firmware-formats.md#why-the-first-block-magic-filter-was-wrong));
+use `fmc_riscv_verify.py` for any new hit. No containers, firmware, or recovered
 keys are included.
 
 ## Related
 
-- [Experiment 07: FMC body layout and key oracle](../../experiments/07_plaintext-corpus.md)
+- [The FMC container format and signature](../../experiments/07_plaintext-corpus.md#074-fmc-container-format-and-signature)
+- [The FMC key search](../../experiments/07_plaintext-corpus.md#0710-the-fmc-key-search-comes-back-negative)
 - [Boot chain](../../specs/01_boot-chain.md)
 - [Firmware formats](../../specs/04_firmware-formats.md)
 - [GSP-RM tools](../gsp-rm-tools/)
