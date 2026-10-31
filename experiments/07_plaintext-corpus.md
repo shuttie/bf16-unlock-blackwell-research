@@ -7,9 +7,9 @@
 - The [3090](https://github.com/Zagitta/gpu-unlock) and
   [4090](https://github.com/JustAResearcher/gpu-unlock-ada) unlocks started with a
   signed boot image and a leaked test key. Blackwell removes that path, so I read
-  the images the driver ships: `nvidia.ko`, the GSP-RM `.fwimage` (the GPU's main
-  firmware), the FMC (first-stage mutable firmware) and bootloader, and the board
-  vBIOS (the PCI option ROM).
+  the images the driver ships: `nvidia.ko`, the [GSP-RM](../specs/04_firmware-formats.md#gsp-rm-image) `.fwimage` (the GPU's main
+  firmware), the [FMC](../specs/04_firmware-formats.md#fmc-container) (first-stage mutable firmware) and bootloader, and the board
+  [vBIOS](../specs/05_vbios-and-devinit.md#where-it-sits) (the PCI option ROM).
 - Most of the work is offline. The live register read and the vBIOS dumps need a
   card and root.
 
@@ -68,8 +68,8 @@
 
 **Why.**
 
-- The 3090/4090 unlocks started with a signed SEC2 (security coprocessor) boot
-  image at PL3 (the boot-firmware privilege level). If Blackwell ships one, it is
+- The 3090/4090 unlocks started with a signed [SEC2](../specs/01_boot-chain.md#sec2) (security coprocessor) boot
+  image at [PL3](../specs/02_privilege-and-rate-control.md#privilege-levels-and-the-plm) (the boot-firmware privilege level). If Blackwell ships one, it is
   the first thing to inspect.
 - What it would give: an exploitable PL3 image, or a closed component inventory.
 
@@ -131,12 +131,12 @@ readelf -SW fmc.bin
 
 **Result.**
 
-- **Answer:** GB202 ships prod and debug GspRmBoot and FMC images; only TU102
-  (303 B) and AD10X (6,233 B) SEC2 images exist.
+- **Answer:** GB202 ships prod and debug [GspRmBoot](../specs/04_firmware-formats.md#gsprmboot) and [FMC](../specs/04_firmware-formats.md#fmc-container) images; only TU102
+  (303 B) and AD10X (6,233 B) [SEC2](../specs/01_boot-chain.md#sec2) images exist.
 - **What we learned:**
   - All bodies are ≥7.98 bits/byte; FMC prod/debug differ in 99.6% of bytes,
     GspRmBoot in 98.4%.
-  - The FMC wrapper sections are `hash` (0x30), `signature` (0x60), `publickey`
+  - The [FMC wrapper](../specs/04_firmware-formats.md#fmc-container) sections are `hash` (0x30), `signature` (0x60), `publickey`
     (0x61), and `image` (0x30a48).
   - There is no GB202 SEC2 image.
 - **Related:**
@@ -154,13 +154,13 @@ immutable boot ROM) image be obtained from the host?
 
 **Why.**
 
-- The FSP and GSP BootROM run from immutable ROM at PL3. A host-readable copy
+- The [FSP](../specs/01_boot-chain.md#terms) and [GSP BootROM](../specs/01_boot-chain.md#boot-order) run from immutable ROM at PL3. A host-readable copy
   would expose the first-stage code.
 - What it would give: the ROM image or a closed route.
 
 **Method.**
 
-- Tools: a filesystem inventory, `nvidia-debugdump`, `/dev/nvdebug`, and the PCI
+- Tools: a filesystem inventory, [`nvidia-debugdump`](../specs/08_errors-and-logging.md#host-tracing-facilities), `/dev/nvdebug`, and the PCI
   ROM BAR.
 - Target: the installed firmware tree and the live card; root for the ROM BAR.
 - Steps:
@@ -195,8 +195,8 @@ The installed package here is 570.144; 595.91.07 has the same three entries
 - **Answer:** no FSP or BootROM image exists in any package; no documented host
   read path exists.
 - **What we learned:**
-  - Obtainable: the board vBIOS, the encrypted FMC, the plaintext GSP-RM.
-  - The ROM BAR read stopped at `0x27A00`;
+  - Obtainable: the board [vBIOS](../specs/05_vbios-and-devinit.md#where-it-sits), the encrypted [FMC](../specs/04_firmware-formats.md#fmc-container), the plaintext [GSP-RM](../specs/04_firmware-formats.md#gsp-rm-image).
+  - The ROM BAR read stopped at [`0x27A00`](../specs/05_vbios-and-devinit.md#pci-image-chain);
     [the full PROM scan](#079-the-full-prom-has-no-feat-table) supersedes it with
     the full aperture.
   - This proves no host-readable image ships, not that the ROMs are absent from
@@ -226,11 +226,11 @@ constant or a FEAT (rate-control register bank) address?
 - Target: `41:00.0`, root; read-only.
 - Steps:
   - Set and clear the PCI ROM BAR enable bit at config `0x30`.
-  - Dump the PROM aperture at BAR0 `0x300000`–`0x400000`; the image starts at
+  - Dump the PROM aperture at [BAR0 `0x300000`–`0x400000`](../specs/05_vbios-and-devinit.md#where-it-sits); the image starts at
     `0x338000`.
-  - Parse the image chain, the BIOS information table (BIT), the microcode table,
+  - Parse the [image chain](../specs/05_vbios-and-devinit.md#pci-image-chain), the [BIOS information table (BIT)](../specs/05_vbios-and-devinit.md#bit), the [microcode table](../specs/05_vbios-and-devinit.md#microcode-table),
     and descriptors.
-  - Scan for FEAT/FUSE constants and x86 MMIO stores; diff the two cards.
+  - Scan for [FEAT](../specs/03_register-map.md#feat-bank)/[FUSE](../specs/03_register-map.md#fuse-and-otp) constants and x86 MMIO stores; diff the two cards.
 - Args used:
 ```bash
 sudo tools/vbios-tools/vbios_probe 0000:41:00.0 300000 100000
@@ -260,17 +260,17 @@ cmp -l flash_41.bin flash_c1.bin | wc -l
   devinit opcodes with an address in 0x823800-0x8238ff: none
 ```
 
-`cmp -l flash_41.bin flash_c1.bin | wc -l` returns `1375`. The PciAt
+`cmp -l flash_41.bin flash_c1.bin | wc -l` returns `1375`. The [PciAt](../specs/05_vbios-and-devinit.md#pci-image-chain)
 decompilation index has 85 functions.
 
 **Result.**
 
-- **Answer:** four real microcode images (`0x07`, `0x19`, `0x15`, `0x23`) and
+- **Answer:** four real [microcode images](../specs/05_vbios-and-devinit.md#microcode-table) (`0x07`, `0x19`, `0x15`, `0x23`) and
   two placeholders (`0x18`, `0x24`); all real bodies are encrypted; there are no
   FEAT/FUSE constants; 1,375 bytes differ between cards.
 - **What we learned:**
   - No FWSEC app IDs.
-  - No FEAT address literals; no devinit opcode in `0x823800`–`0x8238ff`.
+  - No FEAT address literals; no devinit opcode in [`0x823800`–`0x8238ff`](../specs/03_register-map.md#feat-bank).
   - [The boot-input experiments](../experiments/05_fmc-fsp-boot-inputs.md)
     correct the census and body offsets.
   - This is the 1 MiB image, not the 2 MiB aperture; the
@@ -299,8 +299,8 @@ decompilation index has 85 functions.
   container layout and OpenSSL commands.
 - Target: the 595.91.07 `nvidia.ko` and the extracted FMC containers; offline.
 - Steps:
-  - Scan for `03 04 48 00`; each container is `0x48 + u32@+4` bytes.
-  - Split the `0xF8` bytes before the container as
+  - Scan for [`03 04 48 00`](../specs/04_firmware-formats.md#header); each container is `0x48 + u32@+4` bytes.
+  - Split the [`0xF8` bytes](../specs/04_firmware-formats.md#signature-envelope) before the container as
     `publickey[97] || pad[7] || signature[96] || hash[48]`.
   - DER-encode the key as SPKI (`ecPublicKey` + `secp384r1`) and the signature
     as `SEQUENCE{INTEGER r, INTEGER s}`.
@@ -348,13 +348,13 @@ Signature Verified Successfully
 
 **Result.**
 
-- **Answer:** for all 14 samples, `body = code + data + 0xA00`. The `hash` is
-  SHA-384 over the whole container, header included; the signature is `r || s`.
+- **Answer:** for all 14 samples, [`body = code + data + 0xA00`](../specs/04_firmware-formats.md#body-layout). The `hash` is
+  [SHA-384](../specs/04_firmware-formats.md#signature-envelope) over the whole container, header included; the signature is `r || s`.
   Two public keys verify.
 - **What we learned:**
   - Production and debug keys verify different containers. Seven containers
     have a valid hash but no inline key block.
-  - Body entropy is 7.999; ≤1 repeated 16-byte block per image; the prod/debug
+  - [Body entropy](../specs/04_firmware-formats.md#entropy-and-variant-separation) is 7.999; ≤1 repeated 16-byte block per image; the prod/debug
     XOR zero count is 1,154 in 287,232 (chance rate).
   - A valid signature proves NVIDIA signed the container; it says nothing about
     the body plaintext or the encryption key.
@@ -367,7 +367,7 @@ Signature Verified Successfully
 ## 07.5 The GA100 test key does not fit
 
 **Question.** Does the GA100 AES-128-ECB debug test key, a permutation of the MD5
-initialization vector (MD5-IV), open the GB202 debug FMC?
+initialization vector ([MD5-IV](../specs/04_firmware-formats.md#the-published-test-key-family)), open the GB202 debug FMC?
 
 **Why.**
 
@@ -377,15 +377,15 @@ initialization vector (MD5-IV), open the GB202 debug FMC?
 
 **Method.**
 
-- Tools: a byte scan for the 16-byte known-answer test (KAT), a repeated-block
+- Tools: a byte scan for the 16-byte [known-answer test (KAT)](../specs/04_firmware-formats.md#the-published-test-key-family), a repeated-block
   count, and the candidate search in [FMC tools](../tools/fmc-tools/).
 - Target: all FMC containers, the ELF-wrapped FMC, the linux-firmware boot
   loader, the 1 MiB vBIOS dump, and `nvidia.ko`; offline.
 - Steps:
   - Scan for
     `AES-ECB(key37, 0×16) = 717d1494eaca317ff106195258b38377`.
-  - Count repeated 16-byte blocks (ECB structure); the four vBIOS microcode
-    bodies at descriptor `+0x50`, 8 KiB each.
+  - Count repeated 16-byte blocks ([ECB structure](../specs/04_firmware-formats.md#entropy-and-variant-separation)); the four [vBIOS microcode
+    bodies](../specs/05_vbios-and-devinit.md#microcode-table) at descriptor `+0x50`, 8 KiB each.
   - Test 132,240 structured candidates derived from the MD5 IV with
     `pycryptodome`: word and byte orders, rotations, nibble swaps, ShiftRows
     permutations, key-schedule words, XOR/add constants, key-index variants.
@@ -423,8 +423,8 @@ about 1,900 s per container.
 
 ## 07.6 The rate getter has no hidden setter
 
-**Question.** Does the driver's rate getter reflect `FEAT_READOUT_1`, and does the
-GR control table hide a setter?
+**Question.** Does the driver's rate getter reflect [`FEAT_READOUT_1`](../specs/03_register-map.md#readout-decode), and does the
+[GR control table](../specs/03_register-map.md#sm-and-gr) hide a setter?
 
 **Why.**
 
@@ -477,19 +477,19 @@ param_3[2] = local_3c[0];   /* DP, second call through object +0xc38 */
 
 The installer selects the decoder with `0x3e0 >> variant & 1`: variants 5–9 get
 `FUN_ram_015ff1dc` (`0x9668`); every other variant gets `FUN_ram_015ffae8`
-(`0x3818`). The static scan of `FUN_ram_015ffae8` fills the nine bytes from
+(`0x3818`). The static scan of `FUN_ram_015ffae8` fills the [nine bytes](../specs/02_privilege-and-rate-control.md#selector-encoding) from
 `0x3818`; stock `0x00c36180` decodes to `fmla32=3`.
 
 **Result.**
 
-- **Answer:** the getter is a copy-out of `KGRAPHICS_STATIC_INFO`, populated at GR
+- **Answer:** the getter is a copy-out of [`KGRAPHICS_STATIC_INFO`](../specs/02_privilege-and-rate-control.md#the-rm-getter-and-the-host-view), populated at GR
   init. The GR table has no hidden SET.
 - **What we learned:**
   - `0x2080123e` is `GR_TEST_CTXSW_ERROR_LOGS`; the internal static-info entries
     `0x20800b03` and `0x20800b05` are GET-only.
   - The installer selects the decoder with `0x3e0 >> variant & 1`: variants 5–9
     use `0x9668`; every other variant uses `0x3818`.
-  - Stock `0x00c36180` decodes to `fmla32=3`.
+  - Stock [`0x00c36180`](../specs/03_register-map.md#readout-decode) decodes to `fmla32=3`.
   - The getter is a boot-time cache, not a live hardware read.
 - **Related:**
   - The [decoder installation](#078-the-decoder-is-installed-by-the-hal) covers
@@ -503,7 +503,7 @@ The installer selects the decoder with `0x3e0 >> variant & 1`: variants 5–9 ge
 
 **Why.**
 
-- If `nvidia.ko` writes the rate registers, a driver knob could change the rate.
+- If `nvidia.ko` writes the [rate registers](../specs/03_register-map.md#feat-bank), a driver knob could change the rate.
 - What it would give: a host-side writer, or proof the driver only reads.
 
 **Method.**
@@ -518,7 +518,7 @@ The installer selects the decoder with `0x3e0 >> variant & 1`: variants 5–9 ge
   - Trace the vGPU call site; it runs only when
     `bVgpuGspPluginOffloadEnabled`.
   - History: the GB202 HAL file was introduced in `580.65.06` (2025-08-04).
-  - Scan the tree for every rate literal; enumerate `NV_FUSE_ZB_*` uses:
+  - Scan the tree for every rate literal; enumerate [`NV_FUSE_ZB_*`](../specs/03_register-map.md#fuse-and-otp) uses:
     `0x3814` (error-correcting code, ECC), `0x74c`, and the ucode version. All
     are reads.
   - Diff `570.153.02..595.91.07` for the GR init file and the GR control header:
@@ -555,8 +555,8 @@ override reset or COT.
   reference to the six rate registers.
 - **What we learned:**
   - The GB202 HAL file is 63 lines and two functions; it is vGPU-only and does
-    not override reset or the chain-of-trust (COT) path.
-  - A literal scan misses computed offsets (`base + 0x3818`); the
+    not override reset or the [chain-of-trust (COT)](../specs/01_boot-chain.md#cot-v2) path.
+  - A literal scan misses [computed offsets](../specs/03_register-map.md#readout-decode) (`base + 0x3818`); the
     [decoder installation](#078-the-decoder-is-installed-by-the-hal) is the
     correction.
 - **Related:**
@@ -567,7 +567,7 @@ override reset or COT.
 
 ## 07.8 The decoder is installed by the HAL
 
-**Question.** Is the FEAT decoder installed through the per-chip HAL table, or is
+**Question.** Is the [FEAT decoder](../specs/03_register-map.md#readout-decode) installed through the per-chip HAL table, or is
 it dead code?
 
 **Why.**
@@ -612,8 +612,8 @@ The five sites are inside `FUN_ram_01c1c374` (`0x21fc` bytes), each storing into
 
 | Variant (`desc[0x10] & 0x1f`) | `obj+0xC20` | Register source |
 |---|---|---|
-| not in `{5..9}` | `FUN_ram_015ffae8` | fuse `0x3818` via `gpu+0x1D70 → +0x100` |
-| in `{5..9}` | `FUN_ram_015ff1dc` | register `0x9668` via `obj+0xF20 → +0x28` |
+| not in `{5..9}` | `FUN_ram_015ffae8` | fuse [`0x3818`](../specs/03_register-map.md#readout-decode) via `gpu+0x1D70 → +0x100` |
+| in `{5..9}` | `FUN_ram_015ff1dc` | register [`0x9668`](../specs/04_firmware-formats.md#module-map) via `obj+0xF20 → +0x28` |
 
 **Result.**
 
@@ -636,7 +636,7 @@ The five sites are inside `FUN_ram_01c1c374` (`0x21fc` bytes), each storing into
 
 ## 07.9 The full PROM has no FEAT table
 
-**Question.** Does the full 2 MiB PROM aperture contain a FEAT/`SS0`/`SS1` constant
+**Question.** Does the full [2 MiB PROM aperture](../specs/05_vbios-and-devinit.md#where-it-sits) contain a FEAT/`SS0`/`SS1` constant
 (the rate-override bank and its selector words) or a plaintext devinit table that
 names the FEAT block?
 
@@ -653,7 +653,7 @@ names the FEAT block?
 - Target: `41:00.0`, root; read-only.
 - Steps:
   - Dump the 2 MiB aperture read-only.
-  - Parse the image chain, BIT, and microcode table.
+  - Parse the [image chain](../specs/05_vbios-and-devinit.md#pci-image-chain), [BIT](../specs/05_vbios-and-devinit.md#bit), and [microcode table](../specs/05_vbios-and-devinit.md#microcode-table).
   - Scan for FEAT/`SS0`/`SS1` constants and devinit opcodes.
   - Diff the two cards' heads.
 - Args used:
@@ -689,12 +689,12 @@ table at `0x638E5` (`0x820800`–`0x8221A4`).
 
 - **Answer:** no FEAT address in any plaintext table or script.
 - **What we learned:**
-  - Aperture map: `0x00000`–`0x38000` head (`NVFW` at `+0x1000`, 218 KiB
+  - Aperture map: `0x00000`–`0x38000` head ([`NVFW`](../specs/05_vbios-and-devinit.md#where-it-sits) at `+0x1000`, 218 KiB
     encrypted blob, plaintext board metadata); `0x38000`–`0x138000` the vBIOS
-    image; `0x138000`–`0x200000` the `0xBADF1100` sentinel.
+    image; `0x138000`–`0x200000` the [`0xBADF1100` sentinel](../specs/08_errors-and-logging.md#data-sentinels-and-bad-reads).
   - The `0x38000` head differs by 790 bytes; 228,586 of 229,376 identical
     (99.66%).
-  - The only register-address list is a 72-entry FUSE/strap table at `0x638E5`
+  - The only register-address list is a 72-entry [FUSE/strap table](../specs/03_register-map.md#fuse-and-otp) at `0x638E5`
     (`0x820800`–`0x8221A4`).
   - The 218 KiB head blob is encrypted; the scan covers the aperture, not the
     encrypted microcode.
@@ -711,7 +711,7 @@ does the body layout allow a code-first key?
 
 **Why.**
 
-- The previous FMC 16! oracle accepted a key only if its first decrypted block
+- The previous FMC [16! oracle](../specs/04_firmware-formats.md#fmc-encryption-and-key-search) accepted a key only if its first decrypted block
   was a container or compression magic. If the encrypted body starts with code, a
   correct key could have been discarded, and "family exhausted" would not be
   established.
@@ -724,13 +724,13 @@ does the body layout allow a code-first key?
   CUDA search, two-GPU runner, and verifier in
   [FMC tools](../tools/fmc-tools/).
 - Target: the GB202 c09/c11 FMC containers and the GSP-RM code segment; two 5090s.
-- **Layout.** Extract c04 (prod) and c09 (debug) FMC containers and the
-  `GspRmBoot_GB202` prod/debug images from `nvidia.ko` (`.rodata` at `0x434558`;
+- **Layout.** Extract c04 (prod) and c09 (debug) [FMC containers](../specs/04_firmware-formats.md#fmc-container) and the
+  [`GspRmBoot_GB202`](../specs/04_firmware-formats.md#gsprmboot) prod/debug images from `nvidia.ko` (`.rodata` at `0x434558`;
   GspRmBoot at `0x4d6a58`/`0x51da78`; FMC at `0x15b040`/`0x25cf28`). Parse the
-  container header (`codeSize` at `+0x0C`, `dataSize` at `+0x14`) and the
-  GspRmBoot `WprMeta` (host boot descriptor) geometry (manifest 0, data `0xA00`,
+  [container header](../specs/04_firmware-formats.md#header) (`codeSize` at `+0x0C`, `dataSize` at `+0x14`) and the
+  GspRmBoot [`WprMeta`](../specs/01_boot-chain.md#wprmeta) (host boot descriptor) geometry (manifest 0, data `0xA00`,
   code `0xF200`, size `0x47000`). Compare region by region for both pairs.
-- **Oracle.** `build_riscv_logp.py` extracts the loaded GSP-RM code segment (the
+- **Oracle.** `build_riscv_logp.py` extracts the loaded [GSP-RM code segment](../specs/04_firmware-formats.md#address-model) (the
   ELF at file `0x18F000`, `p_vaddr 0x01000000`, `0xDCD000` bytes; the largest of
   the 11 embedded ELF64 headers) and builds a 16-bit parcel histogram: 7,233,536
   parcels, entropy 11.588 bits, `p = (count+1)/(n+65536)`, quantized to
@@ -744,7 +744,7 @@ does the body layout allow a code-first key?
   is the real GSP-RM entry code, encrypt it under the rank-0 key (`POOL` in
   order), and check that the oracle recovers exactly that key. Re-score the
   12,260 legacy c09/c11 first-block hits with the parcel model.
-- **Runs.** Five hypotheses per key: ECB (0), CBC-zero (1), CBC with the
+- **Runs.** [Five hypotheses](../specs/04_firmware-formats.md#the-four-layers) per key: ECB (0), CBC-zero (1), CBC with the
   container header as IV (3), CTR start 0 (2), and CTR start 1 (4). CBC IV
   affects only block 0, so the two CBC variants share one stream; CTR start 1
   costs one extra encrypt. A true CBC key can hit both CBC modes as an expected
@@ -845,8 +845,8 @@ c11 five-mode: 1907 s, 5.50 G keys/s per 5090, 0 valid
     (big-endian word 3), not a byte-swapped value. Both were fixed and the
     controls re-run.
   - The hit counts match the exact-DP expectation (about 2.5 per container across
-    five hypotheses). The KAT, FF, and last-round-key statuses are
-    `KAT_NEGATIVE`, `FF_NEGATIVE`, and `RK_NEGATIVE`. The IV-permutation avenue
+    five hypotheses). The [KAT](../specs/04_firmware-formats.md#the-published-test-key-family), FF, and last-round-key statuses are
+    `KAT_NEGATIVE`, `FF_NEGATIVE`, and `RK_NEGATIVE`. The [IV-permutation avenue](../specs/04_firmware-formats.md#the-published-test-key-family)
     is exhausted for the FMC under all tested modes.
 - **Related:**
   - The [FMC container](#074-fmc-container-format-and-signature) supplies the

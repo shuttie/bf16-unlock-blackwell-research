@@ -15,22 +15,22 @@
 - The evidence split into measured, source-derived, and analogy; the remaining
   surfaces ranked suspend/resume first, FSP/FMC second, per-SM selectors third
   ([the reassessment](#081-critical-reassessment-of-the-findings)).
-- The A100 is a full-rate part and reads `FEAT_READOUT_1 = 0` with every
+- The A100 is a full-rate part and reads [`FEAT_READOUT_1 = 0`](../specs/03_register-map.md#readout-decode) with every
   arithmetic speed fuse at 0; consumer Ampere and Ada carry nonzero fields
   ([the cross-part corpus](#085-external-cross-part-register-corpus)).
-- The two cards' differing `SS0`/`SS1` words do not select different rates: both
+- The two cards' differing [`SS0`/`SS1`](../specs/03_register-map.md#ss0-and-ss1) words do not select different rates: both
   run BF16 at the FP16 rate and TF32 at half, within 0.23% per clock
   ([the same-boot comparison](#083-same-boot-two-card-issue-rate-probe)).
-- The GSP log decodes to a function-level trace without the missing metadata ELF;
+- The GSP log decodes to a function-level trace without the missing [metadata ELF](../specs/08_errors-and-logging.md#what-the-decoder-recovers);
   141 of 173 records resolve, and the KERNEL buffer's metadata base is still
   unknown ([the decoder](#086-gsp-log-decoding-without-the-metadata-elf),
   [the live capture](#088-live-gsp-log-capture-and-decode)).
-- The `0xBADF` log records are PRI refusal telemetry, not probes of the rate path
+- The [`0xBADF`](../specs/08_errors-and-logging.md#data-sentinels-and-bad-reads) log records are PRI refusal telemetry, not probes of the rate path
   ([the sentinel analysis](#089-sentinel-and-raw-function-analysis)).
 - A static write method for `SS0`/`SS1` exists, but it has no visible caller and
   any PL2 write is still dropped by the mask
   ([the static pass](#087-static-pass-over-feat-and-fsp)).
-- BAR1 is a virtual address space, not a framebuffer physical window, so a BAR1
+- [BAR1](../specs/07_memory-and-host-access.md#bar0-and-bar1) is a virtual address space, not a framebuffer physical window, so a BAR1
   read cannot reach the protected regions
   ([the BAR1 probe](#082-direct-bar1-framebuffer-read-probe)).
 - The Linux driver's tracing facility is a compile-time no-op; there is no
@@ -100,7 +100,7 @@ cross-part      A100 FEAT_READOUT_1 = 0x00000000; GB202 = 0x00c36180
   at full rate; the half rate is product segmentation. The weak points and the
   route ranking below are what the reassessment produced.
 - **What we learned:**
-  - The readout-to-rate mapping was unproven; `0x82380c` was under-analysed at
+  - The readout-to-rate mapping was unproven; [`0x82380c`](../specs/03_register-map.md#other-feat-words) was under-analysed at
     the time (later resolved by
     [the cross-part corpus](#085-external-cross-part-register-corpus)); the
     FECS-context closure rested on an assumed layout and a cross-card diff that
@@ -119,7 +119,7 @@ cross-part      A100 FEAT_READOUT_1 = 0x00000000; GB202 = 0x00c36180
     structure probes remain open.
 - **Related:**
   - The [two-card probe](#083-same-boot-two-card-issue-rate-probe) resolves the
-    differing-`SS0`/`SS1` weak point.
+    differing-[`SS0`/`SS1`](../specs/03_register-map.md#ss0-and-ss1) weak point.
   - The [suspend/resume group](../experiments/06_sr-resume.md) closes the state
     editing route.
   - The [cross-part corpus](#085-external-cross-part-register-corpus) resolves
@@ -131,7 +131,7 @@ cross-part      A100 FEAT_READOUT_1 = 0x00000000; GB202 = 0x00c36180
 
 ## 08.2 Direct BAR1 framebuffer read probe
 
-**Question.** Is BAR1 a 1:1 window onto framebuffer physical addresses, so a read
+**Question.** Is [BAR1](../specs/07_memory-and-host-access.md#bar0-and-bar1) a 1:1 window onto framebuffer physical addresses, so a read
 there can reach the non-WPR heap, the WPR, or the boot image?
 
 **Why.**
@@ -161,9 +161,9 @@ saved to a file:
 | Offset | Read |
 |---|---|
 | `0x1000000` (control) | 0/4096 nonzero |
-| `0x7e72e0000` (non-WPR heap) | 0/4096 nonzero |
-| `0x7f0000000` (mid-WPR) | 0/4096 nonzero |
-| `0x7f42c0000` (FRTS) | 0/4096 nonzero |
+| [`0x7e72e0000`](../specs/07_memory-and-host-access.md#the-non-wpr-heap) (non-WPR heap) | 0/4096 nonzero |
+| [`0x7f0000000`](../specs/07_memory-and-host-access.md#wpr-and-frts-layout) (mid-WPR) | 0/4096 nonzero |
+| [`0x7f42c0000`](../specs/07_memory-and-host-access.md#wpr-and-frts-layout) (FRTS) | 0/4096 nonzero |
 
 The same boot's context dump recorded the positive control as:
 
@@ -187,7 +187,7 @@ addresses. After the reads both GPUs reported `GPU requires reset`.
   - [The boot-input group](../experiments/05_fmc-fsp-boot-inputs.md) resolves the
     route: BAR1 is a VAS, that VAS is absent during boot, and the offsets are VAS
     offsets, so this test could never have worked. The BAR0 PRAMIN window is the
-    correct mechanism; the WPR returns `0xbad0ac00`.
+    correct mechanism; the WPR returns [`0xbad0ac00`](../specs/07_memory-and-host-access.md#fault-behavior-and-sentinels).
 - **Related:**
   - The [two-card probe](#083-same-boot-two-card-issue-rate-probe) supplied the
     positive-control buffer.
@@ -196,7 +196,7 @@ addresses. After the reads both GPUs reported `GPU requires reset`.
 
 ## 08.3 Same-boot two-card issue-rate probe
 
-**Question.** Do the two cards' differing `SS0`/`SS1` words select different
+**Question.** Do the two cards' differing [`SS0`/`SS1`](../specs/03_register-map.md#ss0-and-ss1) words select different
 effective rates?
 
 **Why.**
@@ -284,7 +284,7 @@ find /lib/firmware/nvidia -name 'gsp_log_*.bin' -o -name '*.fwlogging'
 grep -n 'gsp_log_ga10x\|fwlogging' "$SRC/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c"
 ```
 
-**Observed data.** `tracer.h` defines every `RMTRACE_*` macro empty outside the
+**Observed data.** `tracer.h` defines every [`RMTRACE_*`](../specs/08_errors-and-logging.md#host-tracing-facilities) macro empty outside the
 Windows ETW build:
 
 ```c
@@ -297,7 +297,7 @@ Windows ETW build:
 ```
 
 The GSP log path allocates host buffers in `_setupLogBufferBaremetal`, but the
-metadata ELF (`gsp_log_ga10x.bin`) is not shipped. The 33,640 log call sites still
+metadata ELF ([`gsp_log_ga10x.bin`](../specs/08_errors-and-logging.md#what-the-decoder-recovers)) is not shipped. The 33,640 log call sites still
 carry literal metadata IDs; that is the
 [decoder](#086-gsp-log-decoding-without-the-metadata-elf) fallback.
 
@@ -306,8 +306,8 @@ carry literal metadata IDs; that is the
 - **Answer:** no. There is no per-launch firmware operation to trace: a launch is
   a pushbuffer entry plus a doorbell, and the RM is not in that path.
 - **What we learned:**
-  - `RMEnableEventTracer` is a compile-time no-op on Linux.
-  - The GSP task log buffers are host-allocated and host-readable.
+  - [`RMEnableEventTracer`](../specs/08_errors-and-logging.md#host-tracing-facilities) is a compile-time no-op on Linux.
+  - The [GSP task log buffers](../specs/08_errors-and-logging.md#gsp-log-ring-format) are host-allocated and host-readable.
   - The metadata ELF is missing, so a text trace is unavailable.
   - [The decoder](#086-gsp-log-decoding-without-the-metadata-elf) recovers a
     function-level trace by joining the raw rings to an ID table, without the
@@ -334,10 +334,10 @@ cross-part values settle the register names and the `0x82380c` false positive?
 - A compiled cross-part table, reproduced inline below. The values come from a
   public survey of CMP-170HX, A100, consumer GA10x, and RTX 3090 Ti parts; the
   record does not depend on the source at read time.
-- Compare the `0x823800`–`0x82382c` block and the `FUSE_SS_*` words across the
+- Compare the [`0x823800`–`0x82382c`](../specs/03_register-map.md#feat-bank) block and the [`FUSE_SS_*`](../specs/03_register-map.md#cross-part-fuse-values) words across the
   four part classes.
 - The same block is collected in
-  [the register-map spec](../specs/03_register-map.md).
+  [the register-map spec](../specs/03_register-map.md#feat-bank).
 
 **Observed data.** Register names and cross-part values:
 
@@ -372,12 +372,12 @@ Fuse values and the full-rate reference:
 **Result.**
 
 - **Answer:** the A100 is a full-rate part and reads `FEAT_READOUT_1 = 0` with
-  every arithmetic speed fuse at 0. Consumer Ampere reads `0x00400080`
-  (`FMLA32 = IMLA4 = 1`); Ada reads `0x00410080`, which adds `IMLA2 = 1` (its
+  every arithmetic speed fuse at 0. Consumer Ampere reads [`0x00400080`](../specs/03_register-map.md#cross-part-feat-values)
+  (`FMLA32 = IMLA4 = 1`); Ada reads [`0x00410080`](../specs/03_register-map.md#cross-part-feat-values), which adds `IMLA2 = 1` (its
   fuse dump was not taken). On every generation the readout mirrors the fuse
   words, and `0` is the full-rate encoding.
 - **What we learned:**
-  - `0x82380c` is `FEAT_OVR_ECC`, the stock ECC override, not a speed word.
+  - [`0x82380c`](../specs/03_register-map.md#other-feat-words) is `FEAT_OVR_ECC`, the stock ECC override, not a speed word.
     `0x00888888` is the stock value on every consumer GA10x part and is an ECC
     configuration, not the Ada speed payload. The earlier speed-override
     hypothesis is withdrawn.
@@ -388,11 +388,11 @@ Fuse values and the full-rate reference:
     per-card bit-8 difference is binning, not a rate selector.
   - The readout is a fuse mirror across generations, and the A100 confirms the
     all-zero target. This strengthens the target in
-    [the rate-control spec](../specs/02_privilege-and-rate-control.md) without
+    [the rate-control spec](../specs/02_privilege-and-rate-control.md#cross-part-comparison) without
     validating the Blackwell override payload format.
-  - The GB203M dump (`SS0` `0x02000000`, then `0x12000000`; bit 28 moved between
+  - The GB203M dump ([`SS0`](../specs/03_register-map.md#ss0-and-ss1) `0x02000000`, then `0x12000000`; bit 28 moved between
     boots) confirms `SS0`/`SS1` are runtime state, not per-part fuses. The FECS
-    copies at `0x409664/68` were `0xbadf5040` on Ada too, so their GB202 sentinel
+    copies at [`0x409664/68`](../specs/03_register-map.md#fecs) were [`0xbadf5040`](../specs/03_register-map.md#bad-read-sentinels) on Ada too, so their GB202 sentinel
     is not a Blackwell regression.
 - **Related:**
   - The [reassessment](#081-critical-reassessment-of-the-findings) records the
@@ -414,7 +414,7 @@ metadata ELF?
 
 **Why.**
 
-- The metadata ELF (`gsp_log_ga10x.bin`) is not shipped, so the normal text trace
+- The metadata ELF ([`gsp_log_ga10x.bin`](../specs/08_errors-and-logging.md#what-the-decoder-recovers)) is not shipped, so the normal text trace
   is unavailable.
 - If the raw rings decode anyway, the boot and GR-init sequence becomes readable.
 - What it would give: a function-level trace without firmware text.
@@ -468,14 +468,14 @@ all tests passed
   metadata ELF: 63,612 table rows (33,044 raw), 58,736 distinct RM IDs, 184 INIT,
   and 75 early.
 - **What we learned:**
-  - Per-task buffer: `word0` is the total u64 words written (monotonic, not a ring
+  - Per-task buffer: [`word0`](../specs/08_errors-and-logging.md#gsp-log-ring-format) is the total u64 words written (monotonic, not a ring
     index); `word1` starts as the GPU physical address and becomes the first
     record slot; capacity is `size/8 - 1`.
   - Record: `[args...][meta][time]`, all u64. The metadata word is second-to-last,
     immediately before the timestamp. An earlier draft had it first; that is
     wrong for `N > 2` and was caught by the selftest.
   - Meta: bits 47:0 are the metadata VA minus the per-task base (RM
-    `0x2018F000`, INIT `0x20183000`, early writer `0x20178000`); 55:48 is `N`
+    [`0x2018F000`](../specs/08_errors-and-logging.md#gsp-log-ring-format), INIT `0x20183000`, early writer `0x20178000`); 55:48 is `N`
     (2..22); 63:56 is the task ID.
   - `FUN_ram_01b9e86e(n, ...)` takes an operand count, not a level; it writes
     `N = n + 1` entries and packs the last vararg (the metadata struct pointer)
@@ -488,7 +488,7 @@ all tests passed
     on hardware.
   - The [sentinel analysis](#089-sentinel-and-raw-function-analysis) uses the
     decoded rings.
-- **Open question:** the KERNEL metadata base is still unknown, and text and
+- **Open question:** the [KERNEL metadata base](../specs/08_errors-and-logging.md#limits-and-open-questions) is still unknown, and text and
   severity need the missing metadata ELF.
 
 ## 08.7 Static pass over FEAT and FSP
@@ -529,11 +529,11 @@ F: 29 FECS command IDs; no selector; no 0x504204 writer.
 
 | Direction | Finding | Status |
 |---|---|---|
-| FEAT consumers | `FUN_ram_0160f1bc` writes `0x381c`/`0x3820` through `FUN_ram_01c60868`; installed at `obj+0x938` for variants not in `{5..9}`; the helper's fallback is a direct BAR0 MMIO store, but there is no visible 4-argument caller. Bit 6 is the alternate ninth byte. | CLOSED-STATIC (method exists; unreachable/PLM-blocked) |
+| FEAT consumers | `FUN_ram_0160f1bc` writes [`0x381c`/`0x3820`](../specs/03_register-map.md#ss0-and-ss1) through `FUN_ram_01c60868`; installed at `obj+0x938` for variants not in `{5..9}`; the helper's fallback is a direct BAR0 MMIO store, but there is no visible 4-argument caller. Bit 6 is the alternate ninth byte. | CLOSED-STATIC (method exists; unreachable/PLM-blocked) |
 | Static-info controls | The control table confirms V1 internal `0x48` (8×9), V2 internal `0x3fe0`, public V1 `0x20`, V2 `0x7fc`; the getter is a copy-out/cache. Handler pointers are 2 bytes early, so the reader trace is partial. | PARTIAL |
-| Decoder selection | `{5..9}` twin confirmed by `0x3e0 >> variant & 1`. `0xC38` is variant-dependent: `FUN_ram_01615a40` (DP `[30:28]`) or `FUN_ram_015ffbd0` (bit 6). GB202 is `0x02`, not in `{5..9}`, so it installs `FUN_ram_015ffae8` / `0x3818`. | CLOSED-STATIC |
-| Registry consumers | `config+0xEA8/0xEAC` are read by `FUN_ram_0216d680` and `FUN_ram_0217f718`, reduced to booleans, and written to a GR context/ucode descriptor, not MMIO; EA8 is gated by `+0xEA4`. `0x504204` has no writer. | CLOSED-STATIC |
-| FSP surface | Only COT `0x14`, caps `0x16`, and clock `0x20` are live; PRC `0x13` is GH100-only; nine NVDM types are unused. No length field; the host controls TX length via `QUEUE_TAIL`; response identity is unchecked. | CLOSED-STATIC |
+| Decoder selection | `{5..9}` twin confirmed by `0x3e0 >> variant & 1`. `0xC38` is variant-dependent: `FUN_ram_01615a40` (DP `[30:28]`) or `FUN_ram_015ffbd0` (bit 6). GB202 is `0x02`, not in `{5..9}`, so it installs `FUN_ram_015ffae8` / [`0x3818`](../specs/03_register-map.md#readout-decode). | CLOSED-STATIC |
+| Registry consumers | `config+0xEA8/0xEAC` are read by `FUN_ram_0216d680` and `FUN_ram_0217f718`, reduced to booleans, and written to a GR context/ucode descriptor, not MMIO; EA8 is gated by `+0xEA4`. [`0x504204`](../specs/03_register-map.md#sm-and-gr) has no writer. | CLOSED-STATIC |
+| FSP surface | Only COT [`0x14`](../specs/01_boot-chain.md#fsp-command-surface), caps `0x16`, and clock `0x20` are live; PRC `0x13` is GH100-only; nine NVDM types are unused. No length field; the host controls TX length via `QUEUE_TAIL`; response identity is unchecked. | CLOSED-STATIC |
 | GR init | 29 FECS command IDs, all init/context/feature; no selector; no per-SM rate loop; no `0x504204` writer. | CLOSED-STATIC |
 | GSP log | See the [decoder](#086-gsp-log-decoding-without-the-metadata-elf). | CLOSED-STATIC |
 
@@ -541,7 +541,7 @@ F: 29 FECS command IDs; no selector; no 0x504204 writer.
 
 - **Answer:** a write method for `SS0`/`SS1` exists (`FUN_ram_0160f1bc`), but it
   has no visible 4-argument caller and any PL2 write is dropped by
-  `FEAT_OVR_PLM`. The decoder selection and registry consumers resolve; the FSP
+  [`FEAT_OVR_PLM`](../specs/03_register-map.md#write-gate). The decoder selection and registry consumers resolve; the FSP
   surface has no memory, fuse, register, or debug command.
 - **What we learned:**
   - The earlier "no computed-offset write to `SS0`/`SS1`" claim is too strong. A
@@ -563,7 +563,7 @@ F: 29 FECS command IDs; no selector; no 0x504204 writer.
     `QUEUE_TAIL`; response identity is unchecked.
   - GB202's implementation constant is `0x02`, not in `{5..9}`; it installs
     `FUN_ram_015ffae8` and reads `0x3818`. The `0x9668` twin is the
-    GB205/GB206/GB207 path, which is why the direct `0x009668` read is
+    GB205/GB206/GB207 path, which is why the direct [`0x009668`](../specs/04_firmware-formats.md#module-map) read is
     unimplemented.
   - The helper's `+0xb48` field is the BAR0 base, not a shadow; the fallback is a
     direct MMIO store. On GeForce, the `is_geforce` byte skips the `fuse+0x108`
@@ -627,7 +627,7 @@ A sample decoded record:
 
 | Buffer | Records | Resolved | Base | Note |
 |---|---:|---:|---:|---|
-| RM (`task 3`) | 98 | 96 | `0x2018F000` | registry, inforom, SEC2/ACR, GR/FECS, display; 27 via raw fallback |
+| RM (`task 3`) | 98 | 96 | [`0x2018F000`](../specs/08_errors-and-logging.md#gsp-log-ring-format) | registry, inforom, SEC2/ACR, GR/FECS, display; 27 via raw fallback |
 | INIT (`task 2`) | 42 | 41 | `0x20183000` | WPR/buffer layout |
 | KERNEL (`task 1`) | 26 | 0 | unknown | IDs `0x2017c3c0`–`0x2017ccf0` not referenced in `.fwimage` |
 | INTR (`task 4`) | 2 | 2 | `0x2018F000` | n/a |
@@ -665,7 +665,7 @@ A sample decoded record:
 
 ## 08.9 Sentinel and raw-function analysis
 
-**Question.** Are the `0xBADF` records in the log trace feature probes that might
+**Question.** Are the [`0xBADF`](../specs/08_errors-and-logging.md#data-sentinels-and-bad-reads) records in the log trace feature probes that might
 touch the rate path?
 
 **Why.**
@@ -698,7 +698,7 @@ python3 -I tools/gsp-rm-tools/logdecode/gsp_log_decode.py --manifest tools/drive
 ```
 
 `0x14252215` decodes as SUBID 20, PRIV_LEVEL 2, SENDING_RS 18, PENDING 1,
-PRIV_MASTER 21; `0xbadf5128` is `NV_PPRIV_SYS_PRIV_ERROR_CODE`. All 17 reported
+PRIV_MASTER 21; [`0xbadf5128`](../specs/08_errors-and-logging.md#data-sentinels-and-bad-reads) is `NV_PPRIV_SYS_PRIV_ERROR_CODE`. All 17 reported
 raw-function starts are genuine prologues; 70 of 70 raw-attributed records
 matched a real writer call site. One decoder attribution was wrong (`0x01187eae`
 is an inner stack adjustment inside `FUN_ram_01187426`); the table builder now
@@ -724,16 +724,19 @@ copied to `+0xa8..+0xe0` are `0x3b9e`, `0x0493`, `0x2cfb`, `0xd7e6`, `0xabf8`,
 **Result.**
 
 - **Answer:** no. The `0xBADF` records are PRI error telemetry, not feature
-  probes, and no `0x8238xx` FEAT register, `FUSE_SS_FMLA32`, `FEAT_READOUT_1`, or
-  `SM_ISSUE_RATE_MODIFIER` appears in them.
+  probes, and no [`0x8238xx`](../specs/03_register-map.md#feat-bank) FEAT register,
+  [`FUSE_SS_FMLA32`](../specs/03_register-map.md#fuse-and-otp),
+  [`FEAT_READOUT_1`](../specs/03_register-map.md#readout-decode), or
+  [`SM_ISSUE_RATE_MODIFIER`](../specs/03_register-map.md#sm-and-gr) appears in
+  them.
 - **What we learned:**
   - `FUN_ram_016ea930` is a PRI ringmaster/ringstation global-write-error dumper.
     It reads `BAR0+0x120058`/`+0x12005c`, walks the per-station records at
     `0x122120+0x800*n`, and logs `[station, ADR, WRDAT, INFO, CODE]`. The
-    captured `0x20471930` record is a refused PL2 access at `0x137200`.
+    captured `0x20471930` record is a refused PL2 access at [`0x137200`](../specs/08_errors-and-logging.md#data-sentinels-and-bad-reads).
   - `FUN_ram_01230c00` logs `[direction, PRI_CODE, ADR, valid]`; the captured
     `[0x1d5e9d0, 0xbadf4100, 0x1100f4, 1]` is a refused access to GSP `HWCFG2`
-    (`0x1100f4`).
+    ([`0x1100f4`](../specs/03_register-map.md#gsp-falcon)).
   - `FUN_ram_016d80c8` is a generic GSP ucode event pump, not a register probe.
   - The trace adds no evidence about the rate selector; it does show the GSP
     hitting PRI refusals at PL2 during boot.
@@ -741,7 +744,7 @@ copied to `+0xa8..+0xe0` are `0x3b9e`, `0x0493`, `0x2cfb`, `0xd7e6`, `0xabf8`,
     fuse-specific. `0xBADF510C` at the fuse block and `0xBADF5128` at `0x137200`
     are instances with different low bytes. `0xBADF4100` belongs to the
     `0xBADF41` PRI-decode family
-    ([errors and logging](../specs/08_errors-and-logging.md)).
+    ([errors and logging](../specs/08_errors-and-logging.md#data-sentinels-and-bad-reads)).
 - **Related:**
   - The [live capture](#088-live-gsp-log-capture-and-decode) supplies the rings.
   - [The decoder](#086-gsp-log-decoding-without-the-metadata-elf) supplies the

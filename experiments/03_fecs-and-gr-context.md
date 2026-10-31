@@ -5,12 +5,12 @@
 **The idea.**
 
 - FECS/GPCCS is the GR (graphics engine) front-end and context-switch microcode;
-  the [rate-control spec](../specs/02_privilege-and-rate-control.md) puts the
+  the [rate-control spec](../specs/02_privilege-and-rate-control.md#the-selector-chain) puts the
   speed selector at the end of that path.
 - The two host-reachable surfaces are the FECS command doorbell and the GR context
   buffers [GSP-RM](../specs/01_boot-chain.md) initializes.
 - I mapped the FECS, [FSP](../specs/01_boot-chain.md) (reset-time security
-  processor), and [SEC2](../specs/01_boot-chain.md) (security coprocessor) register
+  processor), and [SEC2](../specs/01_boot-chain.md#sec2) (security coprocessor) register
   windows, decoded the plaintext FECS command protocol, and dumped the GR context
   images from both cards, looking for a rate selector.
 - What it would give: a writable rate path outside the FEAT bank, or proof the GR
@@ -19,17 +19,17 @@
 **What it found.**
 
 - The FECS, FSP, and SEC2 windows are readable; FECS
-  [PLM](../specs/02_privilege-and-rate-control.md) writes
+  [PLM](../specs/02_privilege-and-rate-control.md#privilege-levels-and-the-plm) writes
   [drop while the `0x409800` doorbell holds](#031-live-fecs-fsp-and-sec2-probes).
 - The plaintext FECS command list has
   [no command that writes FEAT, SS0, or SS1](#032-the-fecs-command-protocol-statically)
-  ([register map](../specs/03_register-map.md)).
+  ([register map](../specs/03_register-map.md#feat-bank)).
 - The host
   [builds context descriptors, not the image](#033-the-fecs-context-path-and-the-host-gr-structures);
   GSP-RM initializes it.
 - The full 3.6 MB GR context image has
   [no known rate constant](#038-the-full-context-image-and-the-0x88888888-false-positive);
-  `0x88888888` is fill, not the Ada payload.
+  [`0x88888888`](../specs/02_privilege-and-rate-control.md#selector-encoding) is fill, not the Ada payload.
 - The two cards' images
   [differ in 618 words, none selector-shaped](#039-comparing-the-gr-context-across-both-cards).
 
@@ -68,7 +68,7 @@ rate or command surface?
 - FECS is the GR (graphics engine) front-end and context-switch microcode; a
   command doorbell there could be a rate lever.
 - The FSP and SEC2 windows might expose a writable control surface that bypasses
-  the [FEAT bank](../specs/03_register-map.md).
+  the [FEAT bank](../specs/03_register-map.md#feat-bank).
 - What it would give: a writable rate register outside the FEAT bank, or proof
   those windows are read-only or gated.
 
@@ -99,17 +99,17 @@ that matter:
 
 | Offset | Value | Meaning |
 |---|---|---|
-| `0x409660` | `0xfffffbef` | PLM: read all / write levels 1–3 |
+| [`0x409660`](../specs/03_register-map.md#fecs) | `0xfffffbef` | PLM: read all / write levels 1–3 |
 | `0x409688` | `0xffffffcf` | PLM: read all / write levels 2–3 |
 | `0x409438` | `0xffffffef` | PLM: read all / write levels 1–3 |
 | `0x4096d0` | `0xffffffff` | read/write all |
 | `0x409638` | `5` | implemented |
-| `0x409800` | `1` | GSP-RM-writable doorbell/status |
+| [`0x409800`](../specs/03_register-map.md#fecs) | `1` | GSP-RM-writable doorbell/status |
 | `0x409b00` / `0x409b04` | `0x007e0f0a` | DP/companion readout |
 | `0x409500` | `0` | command data |
-| `0x409504` | `0xbadf5545` | command ID, read-blocked |
+| `0x409504` | [`0xbadf5545`](../specs/08_errors-and-logging.md#data-sentinels-and-bad-reads) | command ID, read-blocked |
 
-The [PLM](../specs/02_privilege-and-rate-control.md) write returns success and
+The [PLM](../specs/02_privilege-and-rate-control.md#privilege-levels-and-the-plm) write returns success and
 does not change the register:
 
 ```text
@@ -144,8 +144,8 @@ Implemented registers start around `0x409400`; the first 1 KB is sentinels:
 00409500 00000000
 ```
 
-The FSP core block reads `0xbadf5620`; the PMU guess at `0x10a000` is all
-`0xbadf5040`; the SEC2 block is mixed:
+The [FSP core block](../specs/03_register-map.md#fsp) reads `0xbadf5620`; the [PMU guess at `0x10a000`](../specs/03_register-map.md#pmu-and-cms2) is all
+`0xbadf5040`; the [SEC2 block](../specs/03_register-map.md#sec2) is mixed:
 
 ```text
 008f0000 badf5620
@@ -164,7 +164,7 @@ Key FSP and SEC2 values:
 | Offset | Value | Meaning |
 |---|---|---|
 | `0x8f0a58` / `0x8f0a5c` | `0x6624b970` / `3` | core status/config |
-| `0x8f0a90` | `0xffffff8f` | core PLM: read all / write PL3 only |
+| [`0x8f0a90`](../specs/03_register-map.md#fsp) | `0xffffff8f` | core PLM: read all / write PL3 only |
 | `0x8f0ac0` / `0x8f0ac4` | `0x5536c785` / `0x6fd593dc` | ch0 control/data |
 | `0x8f0ac8` / `0x8f0acc` | `0xc79705f3` / `0x8f7a6cc2` | ch1 |
 | `0x8f0ad0` / `0x8f0ad4` | `0x5792ea26` / `0xf7cd4b7b` | ch2 |
@@ -172,7 +172,7 @@ Key FSP and SEC2 values:
 | `0x8f0ab0`–`0x8f0abc` | `e81dc861 98216d8b 803e5471 9e870bdf` | unidentified constant |
 | `0x8401c0` / `0x8401c4` | DMEM port; `AINCR` advances; first 8 KB zero | SEC2 |
 | `0x840180` / `0x840184` | host `0xbadf5720`, GSP-RM `0xbadf5723` | SEC2 IMEM blocked |
-| `0x8403c4` | `0x00000b0f` | SEC2 PLM: read all / write none |
+| [`0x8403c4`](../specs/03_register-map.md#sec2) | `0x00000b0f` | SEC2 PLM: read all / write none |
 
 **Result.**
 
@@ -253,7 +253,7 @@ FUN_ram_015e2724(param_1, lVar5, 0x30, 1, 0, 0);
 iVar4 = FUN_ram_015cc798(param_1, lVar5, 0, &local_84, 1, 0, 5, 0, 0);
 ```
 
-The measured absolute registers are `0x409500` (data), `0x409504` (command ID),
+The [measured absolute registers](../specs/03_register-map.md#fecs) are `0x409500` (data), `0x409504` (command ID),
 and `0x409800` (status/payload). The plaintext call-site command IDs are:
 
 ```text
@@ -263,7 +263,7 @@ and `0x409800` (status/payload). The plaintext call-site command IDs are:
 
 `0x21/0x3fffffff` is a boot feature command; `0x30/0x31/0x32/0x75/0x76` are GR
 init and context commands. None writes the
-[FEAT bank](../specs/03_register-map.md) selectors or `SS0`/`SS1`.
+[FEAT bank](../specs/03_register-map.md#feat-bank) selectors or `SS0`/`SS1`.
 
 **Result.**
 
@@ -408,13 +408,13 @@ python3 tools/driver-harness/parse_ctxdump.py
 **Observed data.** GPU0 booted and produced four dumps; GPU1 failed with
 `_kgspBootGspRm: unexpected WPR2 already up` (WPR2 is the second write-protected
 region, [boot chain](../specs/01_boot-chain.md)) and
-`RmInitAdapter failed! (0x62:0x40:2168)`. The probe targeted GPU1 and never ran, so
+[`RmInitAdapter failed! (0x62:0x40:2168)`](../specs/08_errors-and-logging.md#nv-status-codes). The probe targeted GPU1 and never ran, so
 the dumps are GPU0 driver-init contexts.
 
 | Dump | Tag | Size | Phys | First 4 KB |
 |---|---|---:|---|---|
 | 1 | main | `0x377000` | `0x7e0b79000` | zero |
-| 2 | patch | `0x9000` | `0x7e0f00000` | all `0xaddeadde` |
+| 2 | patch | `0x9000` | `0x7e0f00000` | all [`0xaddeadde`](../specs/08_errors-and-logging.md#data-sentinels-and-bad-reads) |
 | 3 | main | `0x377000` | `0x7e0b92000` | 10 nonzero bytes; first word `0x02400000` |
 | 4 | patch | `0x9000` | `0x7e0a47000` | `0x8f8` bytes initialized, 287 entries |
 
@@ -636,8 +636,8 @@ python3 tools/driver-harness/parse_ctxfiles.py
 | `global_0_7` | 524,288 | 0 | `PRIV_ACCESS_MAP` |
 | `global_0_8` | 524,288 | 15,063 | `UNRESTRICTED_PRIV_ACCESS_MAP` |
 
-The main image contains **0** occurrences of `0x00c36180`, `0xfffffb8f`,
-`0x00504204`, and either stock `SS0` word. `0x88888888` occurs 1,076 times aligned
+The main image contains **0** occurrences of [`0x00c36180`](../specs/03_register-map.md#readout-decode), [`0xfffffb8f`](../specs/02_privilege-and-rate-control.md#privilege-levels-and-the-plm),
+[`0x00504204`](../specs/02_privilege-and-rate-control.md#the-rm-getter-and-the-host-view), and either stock [`SS0`](../specs/03_register-map.md#ss0-and-ss1) word. `0x88888888` occurs 1,076 times aligned
 and 157 times in sixteen-byte runs.
 
 **Result.**
@@ -700,8 +700,8 @@ sudo tools/driver-harness/dump_ctx.sh
 The first `0x4000` and last ~`0x47000` bytes are identical. The 427 diffs are a
 4-bit index field at `[30:27]` in a `~0x3b00`-stride record array; the 191 are
 52-byte-stride table words plus per-boot random values. No diff decodes to the
-[FEAT](../specs/03_register-map.md) vector, and neither image contains a known
-rate constant (`0x00c36180`,
+[FEAT](../specs/03_register-map.md#feat-bank) vector, and neither image contains a [known rate constant](../specs/03_register-map.md#feat-bank)
+ (`0x00c36180`,
 `0xfffffb8f`, `0x00504204`, or either stock `SS0` word). `0x88888888` appears
 1,000 times at identical offsets in both images; `UNRESTRICTED_PRIV_ACCESS_MAP` is
 byte-identical to the previous boot.

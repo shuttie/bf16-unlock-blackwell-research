@@ -11,8 +11,8 @@
   speed-selector override.
 - The candidates were `RMOverrideSmSpeedSelect`, `RMOverrideSmSpeedSelect1`, and
   `RMDisableFeatureDisablement`.
-- I also scanned every plaintext component for a reference to the FEAT and FUSE
-  rate registers.
+- I also scanned every plaintext component for a reference to the FEAT and
+  [FUSE](../specs/03_register-map.md#fuse-and-otp) rate registers.
 
 **What it found.**
 
@@ -74,7 +74,7 @@ and are the registry speed-select keys dead?
   - Scan for each FEAT/FUSE offset as 32- and 64-bit little-endian, then
     histogram every aligned dword in `0x00800000`–`0x008fffff`.
   - Scan every `0x8xxxxx` constant in the 69 modules and check the
-    `0x00823800`–`0x0082382f` window.
+    [`0x00823800`–`0x0082382f`](../specs/03_register-map.md#feat-bank) window.
   - Query the decompiled string index with reference counts, then search raw
     bytes for `regOpCount`, `regOps`, `hChannelTarget`, `ExecRegOps`, and
     `permission to access register`.
@@ -127,8 +127,9 @@ header has 44; the sets match.
     finds both keys.
   - The ctrl-table entries are reliable; the Ghidra-recovered handler bodies were
     not used as evidence.
-  - A literal scan cannot see computed offsets such as `base + 0x3818`.
-    [The computed-offset hunt](../experiments/07_plaintext-corpus.md) covers that
+  - A literal scan cannot see computed offsets such as
+    [`base + 0x3818`](../specs/03_register-map.md#readout-decode). [The
+    computed-offset hunt](../experiments/07_plaintext-corpus.md) covers that
     blind spot.
 - **Related:**
   - The [corrected reference scan](#023-speed-select-keys-are-live-code-paths)
@@ -201,13 +202,15 @@ Call timed out [NV_ERR_TIMEOUT] (0x00000065) ... _kgspBootstrapGspFmc_GH100 ... 
 **Result.**
 
 - **Answer:** yes. Withholding the vidmem FRTS region yields the structured
-  report `0x83d` from the first-stage mutable GPU firmware (FMC) on both cards.
-  The GSPFMC path deadlocks on the reset
-  [PLM](../specs/02_privilege-and-rate-control.md).
+  report [`0x83d`](../specs/08_errors-and-logging.md#boot-error-codes) from the
+  first-stage mutable GPU firmware (FMC) on both cards. The GSPFMC path deadlocks
+  on the reset [PLM](../specs/02_privilege-and-rate-control.md).
 - **What we learned:**
-  - The host cannot lower the level-0 enables in `0x1103c4`, so it cannot reset
-    the GSP it needs to boot. In that state the host reads `0xBADF5720` on
-    `0x1103c0`.
+  - The host cannot lower the level-0 enables in
+    [`0x1103c4`](../specs/06_gsp-riscv-and-priscv.md#falcon-block), so it cannot
+    reset the GSP it needs to boot. In that state the host reads
+    [`0xBADF5720`](../specs/08_errors-and-logging.md#data-sentinels-and-bad-reads)
+    on [`0x1103c0`](../specs/06_gsp-riscv-and-priscv.md#falcon-block).
   - The `0x83d` code shows the FMC consumes the FRTS location; it does not show
     a write primitive.
   - The reset-PLM deadlock is a boot-path property, not a gate on the FMC.
@@ -332,11 +335,12 @@ that key works; unknown keys are forwarded by construction.
 
 - Tools: [Driver harness](../tools/driver-harness/) `regkey_rate_sweep.sh`, the
   [issue-rate probe](../tools/issue-rate-probe/) on both cards, and a direct
-  BAR0 read of `0x823800`–`0x823824` before and after.
+  BAR0 read of [`0x823800`–`0x823824`](../specs/03_register-map.md#feat-bank)
+  before and after.
 - Target: both cards, one stock-driver reload per variant.
 - Variants: `RMOverrideSmSpeedSelect=0x88888888`,
   `RMOverrideSmSpeedSelect=0`, `RMDisableFeatureDisablement=1`, and both keys
-  (`0x88888888` / `0x8`).
+  ([`0x88888888` / `0x8`](../specs/02_privilege-and-rate-control.md#selector-encoding)).
 - Steps: reload, probe both cards, read the bank before and after, restore the
   stock driver.
 - Args used:
@@ -378,10 +382,14 @@ The FEAT bank is byte-identical before and after. For `speed88` on `41:00.0`:
 ```
 
 The per-clock FP16 values span 0.07755–0.07821 TF/s/MHz across all variants; the
-other modes are within about 1% on each card. `READOUT_1`, `SS0`, `SS1`, the
+other modes are within about 1% on each card.
+[`READOUT_1`](../specs/03_register-map.md#readout-decode),
+[`SS0`](../specs/03_register-map.md#ss0-and-ss1),
+[`SS1`](../specs/03_register-map.md#ss0-and-ss1), the
 [PLM](../specs/02_privilege-and-rate-control.md), and the static words at
-`0x823824/28/2c` (`FEAT_OVR_ROW_REMAP`, `FEAT_READOUT_2`, `FEAT_OVR_ECC_2`) are
-unchanged
+`0x823824/28/2c`
+([`FEAT_OVR_ROW_REMAP`, `FEAT_READOUT_2`, `FEAT_OVR_ECC_2`](../specs/03_register-map.md#other-feat-words))
+are unchanged
 ([the cross-part corpus](../experiments/08_assessment-and-cross-checks.md)). No
 Xid, no GSP error.
 

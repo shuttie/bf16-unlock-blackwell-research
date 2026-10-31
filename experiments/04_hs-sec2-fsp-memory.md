@@ -8,7 +8,7 @@
   Heavy Secure (HS). The host and GSP-RM, the main GPU firmware, cannot read their
   memory directly ([boot chain](../specs/01_boot-chain.md),
   [privilege and rate control](../specs/02_privilege-and-rate-control.md)).
-- I tested four host-reachable windows: the GSP external-memory (EMEM) port, the
+- I tested four host-reachable windows: the [GSP external-memory (EMEM) port](../specs/07_memory-and-host-access.md#gsp-emem), the
   FSP core EMEM port, the GSP RISC-V (PRISCV) debug block, and the in-circuit
   debugger (ICD) during the boot window.
 - What it would give: decrypted boot or FMC data, or proof the windows are empty
@@ -70,9 +70,9 @@ decrypted FMC plaintext?
   verbatim; `_kgspBootstrapGspFmc_GH100` points the BootROM at that buffer with
   `BCR_DMAADDR_FMCCODE`. The host buffer is ciphertext.
 - Stub check: `kflcnRiscvIcd{WaitForIdle,ReadMem,ReadReg,Rpc}` are
-  `mov $0x56,%eax; ret` (`NV_ERR_NOT_SUPPORTED`).
+  `mov $0x56,%eax; ret` ([`NV_ERR_NOT_SUPPORTED`](../specs/08_errors-and-logging.md#nv-status-codes)).
 - Steps: arm the EMEM control register (`EMEMC(0)`) with the auto-increment read
-  flag (`AINCR`); stream 2,048 words; run the write/read discriminator with the
+  flag ([`AINCR`](../specs/07_memory-and-host-access.md#gsp-emem)); stream 2,048 words; run the write/read discriminator with the
   auto-increment write flag (`AINCW`); check instruction/data memory (IMEM/DMEM).
 - Args used:
 ```bash
@@ -93,7 +93,7 @@ sudo ./gsp_emem_write.sh
   [ 63] 0000000000  status=0 SUCCESS
 ```
 
-The stream advanced `0x02000000 -> 0x02002000` (4 B per read), and all 2,048 words
+The stream advanced [`0x02000000 -> 0x02002000`](../specs/07_memory-and-host-access.md#gsp-emem) (4 B per read), and all 2,048 words
 read zero. The write/read discriminator passed 5/5:
 
 ```text
@@ -105,7 +105,7 @@ PASS  word at 0x1ffc after restore: 0x00000000
 == RESULT: 5 passed, 0 failed
 ```
 
-No IMEM/DMEM ports exist:
+No [IMEM/DMEM ports](../specs/06_gsp-riscv-and-priscv.md#falcon-block) exist:
 
 ```text
 0x00110180 = 0xbadf5610  status=0 SUCCESS
@@ -114,7 +114,7 @@ No IMEM/DMEM ports exist:
 0x001101c4 = 0xbadf5610  status=0 SUCCESS
 ```
 
-The eight EMEM ports at `0x110ac0`–`0x110afc` are present.
+The eight EMEM ports at [`0x110ac0`–`0x110afc`](../specs/06_gsp-riscv-and-priscv.md#falcon-block) are present.
 
 **Result.**
 
@@ -185,8 +185,8 @@ CTRL READ    after restore = 0x5536c785 status=0 SUCCESS  -> RESTORED
 ```
 
 The second variant (`new=0x55360001`) is also dropped. The likely gate is the
-permission mask (PLM) at `0x8f0a90 = 0xffffff8f` (read all, write PL3 only). The
-adjacent 16-byte constant is `e81dc861 98216d8b 803e5471 9e870bdf`.
+[permission mask (PLM)](../specs/02_privilege-and-rate-control.md#privilege-levels-and-the-plm) at [`0x8f0a90 = 0xffffff8f`](../specs/07_memory-and-host-access.md#fsp-core-emem) (read all, write PL3 only). The
+adjacent 16-byte constant is [`e81dc861 98216d8b 803e5471 9e870bdf`](../specs/07_memory-and-host-access.md#fsp-core-emem).
 
 **Result.**
 
@@ -217,7 +217,7 @@ adjacent 16-byte constant is `e81dc861 98216d8b 803e5471 9e870bdf`.
 **Why.**
 
 - The earlier [Falcon-window sweep](#041-gsp-emem-is-real-but-empty) covered
-  `0x110000–0x11172c`; a debug module above it could give memory/register access.
+  [`0x110000–0x11172c`](../specs/06_gsp-riscv-and-priscv.md#two-blocks-one-base); a debug module above it could give memory/register access.
 - The block appears per-master; mapping it tells where the ICD lives.
 - What it would give: a host/GSP debug path, or the layout to target.
 
@@ -230,10 +230,10 @@ adjacent 16-byte constant is `e81dc861 98216d8b 803e5471 9e870bdf`.
   [memory and host access](../specs/07_memory-and-host-access.md)).
 - Target: `deviceId 1` (`41:00.0`), root.
 - Steps: I compared 4,096 GSP reads with 512 host reads over the same offsets,
-  then mapped `CPUCTL 0x388`, `RPC 0x3ec`, `IRQMASK 0x528`, `IRQDEST 0x52c`, and
+  then mapped [`CPUCTL 0x388`](../specs/06_gsp-riscv-and-priscv.md#priscv-register-map), `RPC 0x3ec`, `IRQMASK 0x528`, `IRQDEST 0x52c`, and
   `PRIV_ERR 0x420–0x430`; ICD `CMD 0x3d0`, `ADDR0/1 0x3d4/0x3d8`,
   `RDATA0/1 0x3e4/0x3e8`, with the STOP, read-register (RREG), read-memory (RDM),
-  read-status (RSTAT), read-CSR (RCSR), and read-PC (RPC) opcodes.
+  read-status (RSTAT), read-CSR (RCSR), and read-PC (RPC) [opcodes](../specs/06_gsp-riscv-and-priscv.md#command-word).
 - Args used:
 ```bash
 sudo ./riscv_dm_probe.sh
@@ -286,16 +286,16 @@ implemented dwords; the two 12-byte tables start:
 - **What we learned:**
   - Across 512 common offsets: 66 identical, 199 differing, 69
     host-value/GSP-sentinel, 80 GSP-value/host-sentinel.
-  - The upper window has 16 implemented dwords; the rest read `0xBADF5040`.
+  - The upper window has 16 implemented dwords; the rest read [`0xBADF5040`](../specs/08_errors-and-logging.md#data-sentinels-and-bad-reads).
   - The Falcon block ends at `0x110d4c`; `0x110d50–0x110ffc` is unimplemented.
   - The PC is one-sided: `RPC` (read PC) is visible only to the GSP and reads a
     live code address (`0x01404f66`, which disassembles as GSP-RM code). The host's
-    `0x1113ec` moved between two reads (`0x93002eb8` → `0x9300338a`, Δ`0x4d2`) and
+    [`0x1113ec`](../specs/06_gsp-riscv-and-priscv.md#priscv-register-map) moved between two reads (`0x93002eb8` → `0x9300338a`, Δ`0x4d2`) and
     is not a PC.
   - The host ICD registers at `0x1113d0–0x1113dc` read zero and are not blocked,
-    while the GSP gets `0xBADFFFFF`, so the ICD is host-facing but was not
+    while the GSP gets [`0xBADFFFFF`](../specs/08_errors-and-logging.md#data-sentinels-and-bad-reads), so the ICD is host-facing but was not
     commanded here.
-  - `TRACEPC_LO 0x11140c = 0x0100287c` does not decode at its stated address;
+  - [`TRACEPC_LO 0x11140c = 0x0100287c`](../specs/06_gsp-riscv-and-priscv.md#priscv-register-map) does not decode at its stated address;
     trace association is unconfirmed.
 - **Related:**
   - The [ICD command test](#044-priscv-icd-is-a-live-debug-port) resolves the host
@@ -328,7 +328,7 @@ core memory?
 - Steps: with GSP-RM up, I tested `ADDR0/1`, `CMD`, `RSTAT`, `RREG`, `RCSR`, and
   `RDM`; then `STOP`; read `RPC`, `RREG`, `RSTAT`, and `RDM`; dumped the code
   window; compared RDM bytes with the extracted image.
-- Command encoding: `OPC[4:0]`, `SZ[7:6]`, `IDX[12:8]`, `ERROR[14]`, `BUSY[15]`,
+- [Command encoding](../specs/06_gsp-riscv-and-priscv.md#command-word): `OPC[4:0]`, `SZ[7:6]`, `IDX[12:8]`, `ERROR[14]`, `BUSY[15]`,
   `PARM[31:16]`. Opcodes: STOP `0x0`, RREG (read register) `0x8`, RDM (read
   memory) `0xa`, RSTAT (read status) `0xe`, RCSR (read CSR) `0x10`, RPC (read PC)
   `0x12`.
@@ -339,15 +339,15 @@ gcc -O2 -o icd_cmd icd_cmd.c
 
 and the same for the other probes.
 
-**Observed data.** With GSP-RM up, `ADDR0`/`ADDR1` (`0x1113d4`/`0x1113d8`)
+**Observed data.** With GSP-RM up, `ADDR0`/`ADDR1` ([`0x1113d4`/`0x1113d8`](../specs/06_gsp-riscv-and-priscv.md#priscv-register-map))
 accepted `0xdeadbe00`, read it back, and restored to `0`; `CMD` retained
 `0x0000000e`. A concurrent CUDA workload was unaffected. While the core ran,
 `RSTAT` idx 0/3/4 completed (`ERROR=0`, `RDATA=0`), but `RREG x1/x2`, `RCSR misa`,
-and `RDM` returned `CMD[14]=1` and `RDATA=0xbadfbadf`
+and `RDM` returned `CMD[14]=1` and [`RDATA=0xbadfbadf`](../specs/08_errors-and-logging.md#data-sentinels-and-bad-reads)
 (`0xbadfbadfbadfbadf` for 8-byte reads). The rejection is the halted-hart
 requirement, not a dead latch.
 
-After `STOP` (`CMD=0`), `CPUCTL` moved `0x2a0` → `0x380`, and the reads succeeded:
+After `STOP` (`CMD=0`), [`CPUCTL`](../specs/06_gsp-riscv-and-priscv.md#priscv-register-map) moved `0x2a0` → `0x380`, and the reads succeeded:
 
 | Read | Value |
 |---|---|
@@ -366,14 +366,14 @@ out and the driver's core-dump path ran: it read `csr[0x897]=5`, `0x899=1`,
 `0xc01=0x292d5e5f1480`, `0xc02=0x23`, attempted a stack unwind with `RDM`, got 0,
 and raised Xid 154.
 
-With the core halted, reads succeed over the RM code segment
+With the core halted, reads succeed over the [RM code segment](../specs/06_gsp-riscv-and-priscv.md#rdm-aperture-and-address-model)
 `0x01000000`–`0x01DCD000` (tested at and between `0x01000000` and `0x01B40000`)
 and fail outside it: `0x01000000` = `7f454c4602010100` (ELF magic), `0x01400000`
 = the image bytes at file `0x58F000`, `0x01800000` OK, `0x02000000` ERROR;
 `0x04000000` (data segment), `0x13ec00000`, `0x7dd580000`, `0x7e72e0000`,
 `0x7f0000000`, `0x7f42c0000` all ERROR.
 
-The address model: the `.fwimage` has a `0x18F000`-byte wrapper; at file
+The address model: the `.fwimage` has a [`0x18F000`](../specs/04_firmware-formats.md#gsp-rm-image)-byte wrapper; at file
 `0x18F000` is an ELF64 RISC-V image with `p_vaddr 0x01000000` (code,
 `filesz 0xDCD000`, RX), `p_vaddr 0x04000000` (data, `filesz 0x1A1000`, RW), entry
 `0x01A0F3DA`. It is loaded at core address `0x01000000` (not host framebuffer
@@ -400,7 +400,7 @@ different, per-master register.
 
 - **Answer:** the ICD is a live, host-facing (PL0) debug port. It provides
   register access and a 14.4 MB read window over the halted core's RM code
-  segment. It does not reach the write-protected region (WPR) or firmware runtime
+  segment. It does not reach the [write-protected region (WPR)](../specs/07_memory-and-host-access.md#wpr-and-frts-layout) or firmware runtime
   state (FRTS), and it does not change the FEAT/PL3 analysis.
 - **What we learned:**
   - With GSP-RM up, `RREG`, `RCSR`, and `RDM` are refused with `CMD[14]=1` and
@@ -430,7 +430,7 @@ read the decrypted boot image?
 - The [live ICD test](#044-priscv-icd-is-a-live-debug-port) showed the ICD can
   read halted RM code after boot; if it works during the boot window, it could
   read the boot image or FMC plaintext.
-- The boot image at `0xefd00000` executes for about 0.5–0.6 ms; a targeted halt
+- The boot image at [`0xefd00000`](../specs/06_gsp-riscv-and-priscv.md#boot-window-gate) executes for about 0.5–0.6 ms; a targeted halt
   might catch it.
 - What it would give: decrypted boot-image or FMC plaintext, or proof the ICD is
   blocked through HS.
@@ -440,8 +440,8 @@ read the decrypted boot image?
 - Tools: three instruments from [driver harness](../tools/driver-harness/) on
   `41:00.0`, plus an FSP sweep:
   - Read-only PC trace: I armed it immediately after the chain-of-trust (COT)
-    response; it samples `CPUCTL 0x111388`, host PC mirror `0x1113ec`, `ICD_CMD 0x1113d0`,
-    `ENGINE 0x1103c0`, and reset PLM `0x1103c4` every 100 µs for 1.5 s.
+    response; it samples [`CPUCTL 0x111388`](../specs/06_gsp-riscv-and-priscv.md#priscv-register-map), host PC mirror `0x1113ec`, `ICD_CMD 0x1113d0`,
+    `ENGINE 0x1103c0`, and [reset PLM](../specs/06_gsp-riscv-and-priscv.md#falcon-block) `0x1103c4` every 100 µs for 1.5 s.
   - Targeted halt: polls the PC mirror every 10 µs; mode 0 stops on the first
     valid PC (boot image), mode 1 on the first PC inside the GSP-RM ranges (the
     Light Secure, LS, transition). Then `STOP`, RPC/RREG/RSTAT, boot-image
@@ -452,7 +452,7 @@ read the decrypted boot image?
     VA.
 - Target: `41:00.0`, root; the instrumented driver tree from
   [driver harness](../tools/driver-harness/). `STOP` halts GSP-RM.
-- FSP sweep: the full FSP register window `0x8f0000`–`0x8f3fff` (4,096 dwords per
+- FSP sweep: the full FSP register window [`0x8f0000`–`0x8f3fff`](../specs/03_register-map.md#fsp) (4,096 dwords per
   view) through host BAR0 and through the GSP.
 - Args used: the halt script in mode 0 (first valid PC) or mode 1 (first GSP-RM
   PC), then the FSP sweep; the harness README has the build hooks.
@@ -470,8 +470,8 @@ read the decrypted boot image?
 
 The first valid PCs on the two cards were `0xefd00174`/`0xefd00894`/`0xefd029b6`
 and `0xefd018c4`/`0xefd0073e`/`0xefd01c98`; GSP-RM followed 0.5–0.6 ms later. The
-boot image is `0x47000` bytes: the boot log records
-`WprMeta bootloader{addr=… size=290816}` and the `GspRmBoot` bindata is 290,816
+boot image is [`0x47000`](../specs/01_boot-chain.md#wprmeta) bytes: the boot log records
+`WprMeta bootloader{addr=… size=290816}` and the [`GspRmBoot`](../specs/01_boot-chain.md#fmc-container) bindata is 290,816
 bytes; one run sampled `0xefd47000`, base+`0x47000`.
 
 The halt leaves `CPUCTL=0x380` and returns the image's `pc`/`ra`/`sp`, but every
@@ -508,8 +508,8 @@ keystream. Its authentication is covered in
 **Result.**
 
 - **Answer:** no. The ICD is blocked through the whole HS phase. `CMD` and the PC
-  mirror read `0xbadf5620` from the COT response until about 155 ms, while Falcon
-  `ENGINE` reads `0xbadf5720`. `STOP` works at unblock, but every `RDM` is
+  mirror read [`0xbadf5620`](../specs/08_errors-and-logging.md#data-sentinels-and-bad-reads) from the COT response until about 155 ms, while Falcon
+  `ENGINE` reads [`0xbadf5720`](../specs/08_errors-and-logging.md#data-sentinels-and-bad-reads). `STOP` works at unblock, but every `RDM` is
   refused.
 - **What we learned:**
   - The first valid PCs on the two cards were
@@ -526,11 +526,11 @@ keystream. Its authentication is covered in
   - `CPUCTL` (`0x180`) and the reset PLM (`0x00000f00`) stay readable through the
     block.
   - The plaintext GSP-RM contains no ICD-enable write; its only PRISCV writes are
-    `IRQDEST`/`0x111520` setup and `ICD_CMD=0` in fatal self-halt paths.
+    [`IRQDEST`](../specs/06_gsp-riscv-and-priscv.md#priscv-register-map)/`0x111520` setup and `ICD_CMD=0` in fatal self-halt paths.
   - The FSP has no debug port: Falcon+`0x3d0` reads `0xbadf5620` (port present but
-    blocked), and `+0x1000` reads `0xbadf5040` (not implemented). Implemented
+    blocked), and `+0x1000` reads [`0xbadf5040`](../specs/08_errors-and-logging.md#data-sentinels-and-bad-reads) (not implemented). Implemented
     outliers are `0x8f1274/98/9c` and two 12-byte tables at
-    `0x8f1f00`/`0x8f1f80`; the `0x8f3000` block carries `0xffffff8f` PLMs.
+    `0x8f1f00`/`0x8f1f80`; the `0x8f3000` block carries [`0xffffff8f`](../specs/02_privilege-and-rate-control.md#privilege-levels-and-the-plm) PLMs.
   - `GspRmBoot` is opaque: 290,816 bytes, entropy 7.999, no plaintext header; the
     prod/debug XOR has 1,167 zero bytes (0.401%, chance rate), so no shared
     keystream.

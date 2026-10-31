@@ -14,11 +14,11 @@
 
 **What it found.**
 
-- Every register in the [FEAT bank](../specs/03_register-map.md) has the
+- Every register in the [FEAT bank](../specs/03_register-map.md#feat-bank) has the
   [same write gate](#013-the-whole-feat-bank-shares-one-gate).
 - FEAT writes through the control
   [return success and read back unchanged](#012-speed-register-write-from-gsp-is-dropped).
-- The [permission mask](../specs/02_privilege-and-rate-control.md)
+- The [permission mask](../specs/02_privilege-and-rate-control.md#privilege-levels-and-the-plm)
   [admits writes from PL3 only](#015-the-permission-mask-admits-pl3-writes-only);
   the [PL2 drop is silent](#012-speed-register-write-from-gsp-is-dropped).
 - The FUSE shadow and the rate modifier
@@ -30,7 +30,7 @@
 
 - No software path
   [writes the selector](#012-speed-register-write-from-gsp-is-dropped).
-- The old route reaches `SS0`/`SS1` from a boot image at PL3, and
+- The old route reaches [`SS0`/`SS1`](../specs/03_register-map.md#ss0-and-ss1) from a boot image at PL3, and
   [that is still the only route](#015-the-permission-mask-admits-pl3-writes-only).
 
 ## Experiments
@@ -48,7 +48,7 @@
 ## 01.1 First register write hits a crashed GSP
 
 **Question.** Can a GSP-RM write through `NV2080_CTRL_CMD_GPU_EXEC_REG_OPS` reach
-`FEAT_OVR_SM_SS0` and stick?
+[`FEAT_OVR_SM_SS0`](../specs/03_register-map.md#ss0-and-ss1) and stick?
 
 **Why.**
 
@@ -67,8 +67,8 @@
 - Control: allocate an RM client, device, and subdevice, then issue
   `NV_ESC_RM_CONTROL 0x20800122`; the tool README has the details.
 - Modes: `read` sends eight `READ_32` ops; `rate` calls the issue-rate getter
-  (`0x20801230`); `name` calls `0x20800110`.
-- Baseline: direct BAR0 read on `41:00.0`.
+  ([`0x20801230`](../specs/02_privilege-and-rate-control.md#the-rm-getter-and-the-host-view)); `name` calls `0x20800110`.
+- Baseline: direct [BAR0](../specs/07_memory-and-host-access.md#bar0-and-bar1) read on `41:00.0`.
 - Args used:
 ```bash
 sudo tools/register-access/regops 1 0000:41:00.0 read
@@ -100,7 +100,7 @@ GET_NAME_STRING              -> 0x1F (NV_ERR_INVALID_ARGUMENT)
 
 | Time | GPU | Sequence |
 |---|---|---|
-| 16:13:40 | `41:00.0` | Xid 13 -> Xid 120 -> Xid 154 |
+| 16:13:40 | `41:00.0` | Xid 13 -> [Xid 120](../specs/07_memory-and-host-access.md#bar0-and-bar1) -> Xid 154 |
 | 16:13:47 | `c1:00.0` | same sequence, 7 s later |
 
 ```text
@@ -110,7 +110,7 @@ Xid 120: GSP task exception: load access page fault (cause:0xd) @ pc:0x1368618,
 
 **Result.**
 
-- **Answer:** no measurement. The control returned `0x62` on every invocation, so
+- **Answer:** no measurement. The control returned [`0x62`](../specs/08_errors-and-logging.md#nv-status-codes) on every invocation, so
   the write was never tested.
 - **What we learned:**
   - `0x62` is `NV_ERR_RESET_REQUIRED`; `_kgspRpcSanityCheck` returns it for every
@@ -119,13 +119,13 @@ Xid 120: GSP task exception: load access page fault (cause:0xd) @ pc:0x1368618,
   - The parameterless getter still returned `NV_OK` because the host driver caches
     the nine selectors at GR init
     ([privilege and rate control](../specs/02_privilege-and-rate-control.md)).
-  - `GET_NAME_STRING` returned `0x1F` (`NV_ERR_INVALID_ARGUMENT`), a normal
+  - `GET_NAME_STRING` returned [`0x1F`](../specs/08_errors-and-logging.md#nv-status-codes) (`NV_ERR_INVALID_ARGUMENT`), a normal
     argument error rather than a reset error, so the RM still answered host-side
     controls.
 - **Related:**
   - The [clean rerun](#012-speed-register-write-from-gsp-is-dropped) supplies the
     actual write test.
-- **Open question:** the BAR0 page scan `0x300000`–`0x400000` ran in the same
+- **Open question:** the BAR0 page scan [`0x300000`–`0x400000`](../specs/07_memory-and-host-access.md#bar0-and-bar1) ran in the same
   window, but the crash cause is not established; `c1:00.0` faulted 7 s later at
   the same PC. The aperture is a hazard regardless
   ([memory and host access](../specs/07_memory-and-host-access.md) has the recovery
@@ -133,7 +133,7 @@ Xid 120: GSP task exception: load access page fault (cause:0xd) @ pc:0x1368618,
 
 ## 01.2 Speed-register write from GSP is dropped
 
-**Question.** Can a GSP-RM write to `FEAT_OVR_SM_SS0` stick when the GSP is
+**Question.** Can a GSP-RM write to [`FEAT_OVR_SM_SS0`](../specs/03_register-map.md#ss0-and-ss1) stick when the GSP is
 healthy?
 
 **Why.**
@@ -148,10 +148,10 @@ healthy?
 - Tool: `regops` from [register access](../tools/register-access/), as root
   against `deviceId 1` (`41:00.0`) on a clean boot.
 - Modes:
-  - `one` reads [`PMC_BOOT_0`](../specs/03_register-map.md) as a connectivity
+  - `one` reads [`PMC_BOOT_0`](../specs/03_register-map.md#chip-wpr-and-boot-targets) as a connectivity
     check.
   - `read` sends eight `READ_32` ops over the FEAT and FUSE windows.
-  - `wr 82381c 0` writes `FEAT_OVR_SM_SS0` (offset `0x82381c`) with `WRITE_32` and
+  - `wr 82381c 0` writes `FEAT_OVR_SM_SS0` (offset [`0x82381c`](../specs/03_register-map.md#ss0-and-ss1)) with `WRITE_32` and
     `regAndNMask = ~value`, then reads it back.
   - `sc` writes a PBUS scratch register that the host also writes at PL0, reads
     it back, and restores it in the same RPC batch.
@@ -185,11 +185,11 @@ and the register did not move.
   - The scratch write changes and restores, the GSP reads match the host BAR0
     reads, and both writes return success.
   - The FEAT register reads back `0x21240001`, unchanged.
-  - The drop is silent: [`regStatus = SUCCESS`](../specs/08_errors-and-logging.md)
+  - The drop is silent: [`regStatus = SUCCESS`](../specs/08_errors-and-logging.md#nv-status-codes)
     cannot distinguish applied from dropped; only the readback can.
   - The negative/positive control pair and the readback rule are the method later
     register claims use.
-  - The test wrote 0, not the `0x88888888` payload. `SS0 = 0` clears every enable
+  - The test wrote 0, not the [`0x88888888`](../specs/02_privilege-and-rate-control.md#selector-encoding) payload. `SS0 = 0` clears every enable
     bit, so it exercises the gate, not a rate change.
 - **Related:**
   - The [rest of the bank](#013-the-whole-feat-bank-shares-one-gate) is the next
@@ -206,7 +206,7 @@ admits PL0 or PL2 writes?
 
 - `SS0` was [dropped](#012-speed-register-write-from-gsp-is-dropped); a different
   register in the same bank might have a looser gate.
-- `0x82380c = 0x00888888` looked like an active override; the 4090 payload uses
+- [`0x82380c`](../specs/03_register-map.md#other-feat-words) = `0x00888888` looked like an active override; the 4090 payload uses
   `0x88888888`.
 - What it would give: an ungated register in the same bank, or proof that the
   whole bank is closed.
@@ -216,7 +216,7 @@ admits PL0 or PL2 writes?
 - Tool: `regops dump` (non-transactional `READ_32`) and `regops wr` (`WRITE_32`
   with `regAndNMask = ~value`, then `READ_32`).
 - Target: `deviceId 1` (`41:00.0`), root.
-- Steps: dump 50 dwords from `0x823800`; write `0x88888888` to `0x82380c`; read
+- Steps: dump 50 dwords from [`0x823800`](../specs/03_register-map.md#feat-bank); write `0x88888888` to `0x82380c`; read
   back.
 - Args used:
 ```bash
@@ -277,13 +277,13 @@ unrelated `0x8230xx` registers.
 - **Answer:** no. All 50 map ops returned `SUCCESS`; the `0x88888888` write
   returned `SUCCESS` and the readback stayed `0x00888888`.
 - **What we learned:**
-  - Unimplemented offsets read `0xBADF5040`
+  - Unimplemented offsets read [`0xBADF5040`](../specs/08_errors-and-logging.md#data-sentinels-and-bad-reads)
     ([errors and logging](../specs/08_errors-and-logging.md)).
   - No register in `0x823800`–`0x8238b0` has a different gate.
-  - The driver only references `0x823814` in the ECC check; the targeted scan
+  - The driver only references [`0x823814`](../specs/03_register-map.md#readout-decode) in the ECC check; the targeted scan
     found no speed-register writer.
   - The bank map is in [the register map](../specs/03_register-map.md).
-    `0x82380c` is `FEAT_OVR_ECC`, the stock ECC override, not a speed word
+    `0x82380c` is [`FEAT_OVR_ECC`](../specs/03_register-map.md#other-feat-words), the stock ECC override, not a speed word
     ([the plaintext corpus](../experiments/07_plaintext-corpus.md)).
   - This tests the bank, not the selector.
 - **Related:**
@@ -294,12 +294,12 @@ unrelated `0x8230xx` registers.
 
 ## 01.4 The fuse shadow and the inert modifier
 
-**Question.** Are the FUSE shadow or [`SM_ISSUE_RATE_MODIFIER`](../specs/02_privilege-and-rate-control.md)
+**Question.** Are the FUSE shadow or [`SM_ISSUE_RATE_MODIFIER`](../specs/02_privilege-and-rate-control.md#the-rm-getter-and-the-host-view)
 a usable write path to the rate?
 
 **Why.**
 
-- The FUSE page-0 permission mask appears to allow writes from every level, so
+- The [FUSE page-0 permission mask](../specs/03_register-map.md#fuse-and-otp) appears to allow writes from every level, so
   the shadow looked writable.
 - The rate modifier is the one rate-related register that might move the issue
   rate.
@@ -314,9 +314,9 @@ a usable write path to the rate?
 - Target: `41:00.0`, root.
 - Steps:
   - Dump the FUSE window in four non-transactional batches over
-    `0x820000`–`0x8207ff`.
+    [`0x820000`–`0x8207ff`](../specs/03_register-map.md#fuse-and-otp).
   - Write, read back, and restore `0x82074c` and `0x8207d8` from both levels.
-  - Write `0x504204` to 0 from both levels.
+  - Write [`0x504204`](../specs/02_privilege-and-rate-control.md#the-rm-getter-and-the-host-view) to 0 from both levels.
   - Run the hash-pinned tensor probe with the register held at 0 after
     `cuCtxCreate`.
 - Probe: the runner checks the power cap, validates all 270,336 output cells per
@@ -368,7 +368,7 @@ The register log read 0 at all 17 stages.
 - **What we learned:**
   - The FUSE page-0 mask appears to allow writes from every level, but the
     shadow is not writable; the effective gate is below the PLM.
-  - `SM_ISSUE_RATE_MODIFIER` is writable and reasserted to 5 at CUDA context
+  - [`SM_ISSUE_RATE_MODIFIER`](../specs/02_privilege-and-rate-control.md#the-rm-getter-and-the-host-view) is writable and reasserted to 5 at CUDA context
     creation. Holding it at 0 does not move the measured rate.
   - The hash-pinned probe with the register held at 0 is the method for testing a
     register's effect on the measured rate.
@@ -377,17 +377,17 @@ The register log read 0 at all 17 stages.
 - **Related:**
   - The rate modifier is documented in
     [privilege and rate control](../specs/02_privilege-and-rate-control.md).
-- **Open question:** where the FUSE shadow's effective gate sits below the PLM is
+- **Open question:** where the FUSE shadow's effective gate sits below the [PLM](../specs/02_privilege-and-rate-control.md#privilege-levels-and-the-plm) is
   not located.
 
 ## 01.5 The permission mask admits PL3 writes only
 
-**Question.** What does `FEAT_OVR_PLM = 0xfffffb8f` mean, and which writes does it
+**Question.** What does [`FEAT_OVR_PLM`](../specs/03_register-map.md#write-gate) = `0xfffffb8f` mean, and which writes does it
 admit?
 
 **Why.**
 
-- Bit 10 is clear here and set in Ada's `0xffffff8f`; an earlier reading took
+- Bit 10 is clear here and set in Ada's [`0xffffff8f`](../specs/03_register-map.md#write-gate); an earlier reading took
   that as a removed source.
 - If the layout is the standard Falcon v4 mask, the write field is the gate.
 - What it would give: the exact privilege level a write must come from.
@@ -413,13 +413,13 @@ Ada comparison            = 0xffffff8f
 **Result.**
 
 - **Answer:** the mask is a Falcon v4 privilege mask. The write field
-  `[7:4] = 8` admits PL3 writes only.
+  `[7:4] = 8` admits [PL3](../specs/02_privilege-and-rate-control.md#privilege-levels-and-the-plm) writes only.
 - **What we learned:**
 
 | Bits | Field | `0xfffffb8f` | Ada `0xffffff8f` |
 |---|---|---|---|
 | `3:0` | `READ_PROTECTION` | `0xf` (all levels) | same |
-| `7:4` | `WRITE_PROTECTION` | `0x8` (**PL3 only**) | same |
+| `7:4` | [`WRITE_PROTECTION`](../specs/03_register-map.md#write-gate) | `0x8` (**PL3 only**) | same |
 | `8` | `READ_VIOLATION` | report error | same |
 | `9` | `WRITE_VIOLATION` | report error | same |
 | `10` | `SOURCE_READ_CONTROL` | 0 = lowered | 1 = blocked |
@@ -442,7 +442,7 @@ Ada comparison            = 0xffffff8f
 ## 01.6 The post-reset window closes before GSP-RM
 
 **Question.** Can a GSP-RM write use the PL2-writable window that opens after a
-PCI function-level reset (FLR)?
+PCI function-level reset ([FLR](../specs/02_privilege-and-rate-control.md#privilege-levels-and-the-plm))?
 
 **Why.**
 
@@ -450,7 +450,7 @@ PCI function-level reset (FLR)?
   window; this tests whether it can be reached before the re-lock.
 - The [4090 unlock](https://github.com/JustAResearcher/gpu-unlock-ada) relies on
   an FLR leaving its override in place.
-- What it would give: a PL2 write path without a PL3 exploit, or a timing bound
+- What it would give: a [PL2](../specs/02_privilege-and-rate-control.md#privilege-levels-and-the-plm) write path without a PL3 exploit, or a timing bound
   that closes it.
 
 **Method.**
@@ -462,8 +462,8 @@ PCI function-level reset (FLR)?
 - Steps:
   - Start the poller before the bind; it re-maps `resource0` on every sample so
     it survives the bind.
-  - Sample the FEAT bank plus GSP `ENGINE` (`0x1103c0`), reset PLM (`0x1103c4`),
-    and host PC mirror (`0x1113ec`).
+  - Sample the FEAT bank plus GSP `ENGINE` ([`0x1103c0`](../specs/03_register-map.md#gsp-falcon)), reset PLM ([`0x1103c4`](../specs/03_register-map.md#gsp-falcon)),
+    and host PC mirror ([`0x1113ec`](../specs/03_register-map.md#priscv)).
   - `nvidia-smi -L` triggers the first open.
 - Args used:
 ```bash
@@ -474,8 +474,8 @@ sudo tools/driver-harness/plm_window_race.sh measure 0000:41:00.0
 
 | Run | First sample | Re-lock | First GSP-RM PC |
 |---|---:|---:|---:|
-| missed | `0xfffffb8f` | not measured | not logged |
-| A | `0x80842bcf` | 1156 ms | not logged |
+| missed | [`0xfffffb8f`](../specs/03_register-map.md#write-gate) | not measured | not logged |
+| A | [`0x80842bcf`](../specs/02_privilege-and-rate-control.md#privilege-levels-and-the-plm) | 1156 ms | not logged |
 | B | `0x80842bcf` | 1323 ms | 3176 ms |
 
 In both measured runs the window opened at t=0 with `plm=0x80842bcf`. The first
@@ -542,7 +542,7 @@ through `GR_CTX` and the other typed regtypes?
   [driver harness](../tools/driver-harness/).
 - Target: `41:00.0`, root.
 - Steps:
-  - `gprobe` reads `0x504204`, `SS0`, `SS1`, and `PLM` under `GLOBAL`, `GR_CTX`,
+  - `gprobe` reads [`0x504204`](../specs/02_privilege-and-rate-control.md#the-rm-getter-and-the-host-view), [`SS0`](../specs/03_register-map.md#ss0-and-ss1), `SS1`, and [`PLM`](../specs/02_privilege-and-rate-control.md#privilege-levels-and-the-plm) under `GLOBAL`, `GR_CTX`,
     `GR_CTX_TPC`, `GR_CTX_SM`, `GR_CTX_QUAD`, and `FB`.
   - `gprobe_route` repeats `GR_CTX` with `grRouteInfo.flags` 0–3
     (`TYPE_NONE`/`ENGID`/`CHANNEL`/both).
@@ -559,11 +559,11 @@ sudo tools/driver-harness/gprobe_with_ctx.sh route
 | `regType` | Control status | Per-op values |
 |---|---|---|
 | `GLOBAL` | 0 | `0x504204=5`, `SS0=0x21265043`, `SS1=0x6`, `PLM=0xfffffb8f` |
-| `GR_CTX` | `0x1f` | all 0 |
+| `GR_CTX` | [`0x1f`](../specs/08_errors-and-logging.md#nv-status-codes) | all 0 |
 | `GR_CTX_TPC` | `0x1f` | all 0 |
 | `GR_CTX_SM` | `0x1f` | all 0 |
 | `GR_CTX_QUAD` | `0x1f` | all 0 |
-| `FB` | `0x56` | all 0 |
+| `FB` | [`0x56`](../specs/08_errors-and-logging.md#nv-status-codes) | all 0 |
 
 The route run repeated `GR_CTX` with flags 0–3:
 

@@ -5,10 +5,10 @@
 **The idea.**
 
 - A device-level suspend/resume (SR) cycle makes the host build two structures:
-  `SRMeta`, a 256-byte descriptor with the saved-state size, flags, and page-table
-  pointer; and a three-level radix3 page table that maps the saved state.
-- The FMC (first-stage mutable GPU firmware) consumes both on resume. The saved
-  state covers the region from the non-WPR heap through FRTS, the firmware
+  [`SRMeta`](../specs/01_boot-chain.md#suspendresume), a 256-byte descriptor with the saved-state size, flags, and page-table
+  pointer; and a three-level [radix3](../specs/01_boot-chain.md#suspendresume) page table that maps the saved state.
+- The [FMC](../specs/01_boot-chain.md#terms) (first-stage mutable GPU firmware) consumes both on resume. The saved
+  state covers the region from the [non-WPR heap](../specs/07_memory-and-host-access.md#the-non-wpr-heap) through [FRTS](../specs/07_memory-and-host-access.md#wpr-and-frts-layout), the firmware
   runtime state region inside the WPR, the write-protected firmware region.
 - I ran the stock cycle, changed `SRMeta.magic`, dumped the state, and parsed the
   page table.
@@ -22,7 +22,7 @@
   resume](#062-a-bad-srmeta-magic-hangs-the-resume) with no host-visible error.
 - The [saved state is 205.875 MiB of high-entropy
   data](#063-the-saved-state-is-high-entropy-ciphertext) with none of the
-  selector constants.
+  [selector constants](../specs/03_register-map.md#feat-bank).
 - The [radix3 is plaintext and fully
   mapped](#064-the-radix3-is-plaintext-and-fully-mapped); the data pages are
   per-boot and per-card ciphertext.
@@ -47,7 +47,7 @@
 ## 06.1 The suspend and resume cycle is host-driven
 
 **Question.** Does a device-level suspend/resume cycle exercise the SR path, and
-does the host build `SRMeta` plus the radix3 that the FMC consumes on resume?
+does the host build [`SRMeta`](../specs/01_boot-chain.md#suspendresume) plus the radix3 that the [FMC](../specs/01_boot-chain.md#terms) consumes on resume?
 
 **Why.**
 
@@ -96,24 +96,24 @@ The second card printed the same fields with `radix3Addr=0x1af000000`.
 - **Answer:** yes. The host builds `SRMeta` and the radix3 in unprotected memory
   and hands the descriptor to the FMC on resume. Both cards return in about 8 s.
 - **What we learned:**
-  - Both `SRMeta` sizes are `0xcde0000`, matching the WPR span measured at boot
-    ([memory and host access](../specs/07_memory-and-host-access.md)).
-  - The descriptor carries `magic=0x8a3bb9e6c6c39d93`, `rev=2`, `flags=0`, the
+  - Both `SRMeta` sizes are [`0xcde0000`](../specs/01_boot-chain.md#suspendresume), matching the WPR span measured at boot
+    ([memory and host access](../specs/07_memory-and-host-access.md#wpr-and-frts-layout)).
+  - The descriptor carries [`magic=0x8a3bb9e6c6c39d93`](../specs/01_boot-chain.md#suspendresume), `rev=2`, `flags=0`, the
     FRTS/non-WPR inputs, and a per-card `radix3Addr`.
   - The resume uses `bootMode=1` and the host-built descriptor instead of
-    `WprMeta`, the cold-boot descriptor ([boot chain](../specs/01_boot-chain.md)).
+    [`WprMeta`](../specs/01_boot-chain.md#wprmeta), the cold-boot descriptor ([boot chain](../specs/01_boot-chain.md#suspendresume)).
   - The page table is built in unprotected sysmem, so the structure is readable.
 - **Related:**
   - The [bad-magic run](#062-a-bad-srmeta-magic-hangs-the-resume) tests whether
     the FMC consumes the descriptor.
   - The [state dump](#063-the-saved-state-is-high-entropy-ciphertext) reads the
     mapped state.
-- **Open question:** does HS validate the descriptor? This run shows the host
+- **Open question:** does [HS](../specs/02_privilege-and-rate-control.md#privilege-levels-and-the-plm) validate the descriptor? This run shows the host
   builds and passes it, not that firmware checks it.
 
 ## 06.2 A bad SRMeta magic hangs the resume
 
-**Question.** Does the FMC/SR code consume `SRMeta.magic`, and does a wrong magic
+**Question.** Does the FMC/SR code consume [`SRMeta.magic`](../specs/01_boot-chain.md#suspendresume), and does a wrong magic
 return an error or hang?
 
 **Why.**
@@ -175,7 +175,7 @@ dmesg.
     control that returns.
   - The [plaintext radix3](#064-the-radix3-is-plaintext-and-fully-mapped) is the
     next structural surface.
-- **Open question:** whether HS validates the descriptor before the magic check,
+- **Open question:** whether [HS](../specs/02_privilege-and-rate-control.md#privilege-levels-and-the-plm) validates the descriptor before the magic check,
   and which later stage hangs, need out-of-band logging.
 
 ## 06.3 The saved state is high-entropy ciphertext
@@ -186,7 +186,7 @@ selectors?
 **Why.**
 
 - The state is restored into secure firmware. If it were plaintext, the host
-  could edit it to change rate selectors.
+  could edit it to change [rate selectors](../specs/03_register-map.md#feat-bank).
 - If it is ciphertext, state editing is closed and the remaining surface is the
   page table.
 - What it would give: a plaintext state-editing path, or proof that the state is
@@ -199,9 +199,9 @@ selectors?
   chunks and writes one file per card.
 - Target: both cards.
 - Steps:
-  - Read `SRMeta`; compute the data region as the tail of the radix3 allocation.
+  - Read [`SRMeta`](../specs/01_boot-chain.md#suspendresume); compute the data region as the tail of the radix3 allocation.
   - Dump it and scan every 32-bit word.
-  - The data offset is `0xce49000 - 0xcde0000 = 0x69000`.
+  - The data offset is [`0xce49000 - 0xcde0000 = 0x69000`](../specs/01_boot-chain.md#suspendresume).
 - Args used:
 ```bash
 sudo tools/driver-harness/sr_dump_test.sh
@@ -237,7 +237,7 @@ equal bytes inside card0-nonzero chunks: 2258261
 **Result.**
 
 - **Answer:** the saved state is high-entropy ciphertext and contains none of the
-  selector constants. Editing it as plaintext does not work.
+  [selector constants](../specs/03_register-map.md#feat-bank). Editing it as plaintext does not work.
 - **What we learned:**
 
 | Metric | Value |
@@ -246,12 +246,12 @@ equal bytes inside card0-nonzero chunks: 2258261
 | Zero 1-MiB chunks | 97 / 205, identical mask on both cards |
 | Nonzero spans | 0–7, 11–17, 112–204 MiB |
 | Entropy, nonzero chunks | 7.9998 bits/byte |
-| ELF / WprMeta / SRMeta magic / vendor strings | none |
+| ELF / [`WprMeta`](../specs/01_boot-chain.md#wprmeta) / `SRMeta` magic / vendor strings | none |
 | zstd / gzip / lz4 / xz headers | none |
 | Bytes equal between cards outside zero chunks | 2,258,261 of ~108 MiB |
-| FEAT/selector constants | 0 |
+| [FEAT](../specs/03_register-map.md#feat-bank)/selector constants | 0 |
 
-- `0xcde0000` is 215,875,584 bytes, so the 205 chunks are the measurement.
+- [`0xcde0000`](../specs/01_boot-chain.md#suspendresume) is 215,875,584 bytes, so the 205 chunks are the measurement.
 - **Related:**
   - The [stock cycle](#061-the-suspend-and-resume-cycle-is-host-driven) provides
     the descriptor and the state size.
@@ -262,7 +262,7 @@ equal bytes inside card0-nonzero chunks: 2258261
 
 ## 06.4 The radix3 is plaintext and fully mapped
 
-**Question.** Is the radix3 page table plaintext and fully mapped, while the saved
+**Question.** Is the [radix3](../specs/01_boot-chain.md#suspendresume) page table plaintext and fully mapped, while the saved
 data pages are per-boot and per-card ciphertext?
 
 **Why.**
@@ -280,7 +280,7 @@ data pages are per-boot and per-card ciphertext?
   descriptor, then `analyze_ptes.py`.
 - Target: both cards.
 - Steps:
-  - Dump the whole descriptor (`0xce49000` per card; state `0xcde0000`, data at
+  - Dump the whole descriptor (`0xce49000` per card; state [`0xcde0000`](../specs/01_boot-chain.md#suspendresume), data at
     `0x69000`).
   - Parse the root, L1, and L2 levels.
 - Args used:
@@ -324,7 +324,7 @@ within-run equal 4K pages: 25277/52809
 |---|---|
 | root (1 page) | `root[0]` → L1 at `+0x1000` |
 | L1 (1 page) | `L1[0..102]` → 103 L2 pages |
-| L2 (103 pages) | 52,704 nonzero, unique, 4K-aligned PTEs (page-table entries) in 52,736 slots |
+| L2 (103 pages) | 52,704 nonzero, unique, 4K-aligned [PTEs](../specs/01_boot-chain.md#suspendresume) (page-table entries) in 52,736 slots |
 
 - The data pages sit in 52 physical runs, mostly 1,024 pages (4 MiB); card0
   starts at `0x1c2c69000`.
@@ -344,6 +344,6 @@ within-run equal 4K pages: 25277/52809
     descriptor.
   - The [state dump](#063-the-saved-state-is-high-entropy-ciphertext) shows the
     mapped data is ciphertext.
-- **Open question:** whether HS validates the PTEs before walking them. A
+- **Open question:** whether [HS](../specs/02_privilege-and-rate-control.md#privilege-levels-and-the-plm) validates the PTEs before walking them. A
   malformed entry is the remaining structural probe, but a failed resume hangs
   with no host log.

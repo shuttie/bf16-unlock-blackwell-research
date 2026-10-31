@@ -4,14 +4,14 @@
 
 **The idea.**
 
-- The chain-of-trust (COT) message is the host-built boot request the FSP (the
-  security processor that runs first out of reset) consumes: FMC address, FRTS
+- The chain-of-trust ([COT](../specs/01_boot-chain.md#cot-v2)) message is the host-built boot request the FSP (the
+  security processor that runs first out of reset) consumes: FMC address, [FRTS](../specs/07_memory-and-host-access.md#wpr-and-frts-layout)
   layout, SHA-384, P-384 key, and signature.
-- `WprMeta` is the 256-byte host descriptor the FMC (the first-stage mutable
-  firmware) consumes on a cold boot; GSP-RM is the main GPU firmware that runs
+- [`WprMeta`](../specs/01_boot-chain.md#wprmeta) is the 256-byte host descriptor the [FMC](../specs/04_firmware-formats.md#fmc-container) (the first-stage mutable
+  firmware) consumes on a cold boot; [GSP-RM](../specs/04_firmware-formats.md#gsp-rm-image) is the main GPU firmware that runs
   after it.
 - FRTS is the firmware runtime state region inside the write-protected VRAM
-  region (WPR); GSCI is the post-boot query that returns the WPR layout.
+  region ([WPR](../specs/07_memory-and-host-access.md#wpr-and-frts-layout)); [GSCI](../specs/01_boot-chain.md#terms) is the post-boot query that returns the WPR layout.
 - This group varies one host field per boot and reads the structured FSP/FMC
   error code or the GSCI layout.
 - What it would give: a host-controlled field that moves the protected layout,
@@ -33,9 +33,9 @@
 - The [heap request is honoured
   downward](#0513-heap-size-request-honoured-downward); a
   [16 MiB request wedges](#0514-16-mib-heap-request-wedges-the-boot).
-- The FEAT bank is [final before the FMC](#0517-feat-bank-final-before-the-fmc);
+- The [FEAT](../specs/03_register-map.md#feat-bank) bank is [final before the FMC](#0517-feat-bank-final-before-the-fmc);
   the [re-lock is GPU-side devinit](#0521-plm-re-lock-is-autonomous-devinit).
-- The vBIOS [plaintext tables carry no FEAT
+- The [vBIOS](../specs/05_vbios-and-devinit.md#where-it-sits) [plaintext tables carry no FEAT
   address](#0522-vbios-devinit-table-scan), and the devinit tables are
   authenticated.
 - The [bootloader buffer is not decrypted in
@@ -255,7 +255,7 @@ The dmesg words match the file bytes when each 32-bit word is read little-endian
 **Method.**
 
 - Tool: `tools/driver-harness/fmc_oracle.sh 1 0x80000` halves the COT
-  `frtsVidmemSize`; every other field is stock.
+  [`frtsVidmemSize`](../specs/01_boot-chain.md#cot-v2); every other field is stock.
 - Target: both cards, root.
 - Args used:
 ```bash
@@ -269,7 +269,7 @@ FSP response reported error. Task ID: 0x1 Command type: 0x14 Error code: 0xd9
 FSP boot cmds failed. RM cannot boot.
 ```
 
-The retry recomputed `frtsVidmemOffset` to `0x10520000` and failed the same way.
+The retry recomputed [`frtsVidmemOffset`](../specs/01_boot-chain.md#cot-v2) to `0x10520000` and failed the same way.
 The run also exposed a driver lifetime bug: `kfspCleanupBootState_IMPL` destroyed
 the engine-lifetime `pPollEvent`; the retry scheduled and destroyed the freed
 event and oopsed in `hrtimer_active` (NULL `hrtimer.base`). The fix moves the
@@ -277,7 +277,7 @@ destroy into `kfspStateDestroy_IMPL` (NULL-guarded).
 
 **Result.**
 
-- **Answer:** the FSP rejects a half-size FRTS region with `0xd9`.
+- **Answer:** the FSP rejects a half-size FRTS region with [`0xd9`](../specs/08_errors-and-logging.md#boot-error-codes).
 - **What we learned:**
   - `0xd9` is an FSP size check, not an FMC result.
   - The oops is a driver lifetime bug, fixed in the tree used by later records.
@@ -369,7 +369,7 @@ BF16: COT hash=ee0988fea62832c4b2fe90d87e2f6104 ...
 
 - **Answer:** no. The FSP accepts a relocated aligned base.
 - **What we learned:**
-  - The offset is not pinned to the stock `0x1b40000`.
+  - The offset is not pinned to the stock [`0x1b40000`](../specs/01_boot-chain.md#cot-v2).
   - Acceptance is not consumption; the [layout test](#059-cot-offset-positions-the-whole-layout)
     proves the moved value is used.
 - **Related:**
@@ -583,7 +583,7 @@ byte.
 
 ## 05.11 WprMeta magic enforced; verified accepted
 
-**Question.** Is `WprMeta.magic` enforced, and does a preset `verified` flag do
+**Question.** Is [`WprMeta.magic`](../specs/01_boot-chain.md#wprmeta) enforced, and does a preset `verified` flag do
 anything?
 
 **Why.**
@@ -624,7 +624,7 @@ BF16: WprMeta radix3Elf{addr=0x18e400000 size=72830976} bootloader{addr=0x1c3a80
 
 **Result.**
 
-- **Answer:** magic is enforced (`0x827`); a preset `verified` reaches the FMC but
+- **Answer:** magic is enforced ([`0x827`](../specs/08_errors-and-logging.md#boot-error-codes)); a preset `verified` reaches the FMC but
   has no visible effect on initial boot.
 - **What we learned:**
   - Failed attempts move the COT base by `0xE9C0000`.
@@ -635,7 +635,7 @@ BF16: WprMeta radix3Elf{addr=0x18e400000 size=72830976} bootloader{addr=0x1c3a80
 
 ## 05.12 WprMeta and COT sizes disagree
 
-**Question.** Does the FMC cross-check `WprMeta.frtsSize` against the COT?
+**Question.** Does the FMC cross-check [`WprMeta.frtsSize`](../specs/01_boot-chain.md#wprmeta) against the COT?
 
 **Why.**
 
@@ -674,7 +674,7 @@ BF16: GSCI fwWprLayoutOffset nonWprHeap=0x7e72e0000 frts=0x7f42c0000
 
 ## 05.13 Heap-size request honoured downward
 
-**Question.** Is the host `gspFwHeapSize` request honoured?
+**Question.** Is the host [`gspFwHeapSize`](../specs/01_boot-chain.md#wprmeta) request honoured?
 
 **Why.**
 
@@ -751,14 +751,14 @@ Both cards failed identically; the stock restore reported `No devices found.`
   refusal.
 - **What we learned:**
   - One reboot per point below the minimum; bisect from above.
-  - WPR2 stays up after the timeout.
+  - [WPR2](../specs/01_boot-chain.md#failure-modes) stays up after the timeout.
 - **Related:**
   - The [larger request](#0513-heap-size-request-honoured-downward) sets the
     formula.
 
 ## 05.15 Verified does not bypass image verification
 
-**Question.** Does a preset `WprMeta.verified` bypass the GSP-RM image check?
+**Question.** Does a preset [`WprMeta.verified`](../specs/01_boot-chain.md#wprmeta) bypass the GSP-RM image check?
 
 **Why.**
 
@@ -828,12 +828,12 @@ restore found no devices.
 
 **Result.**
 
-- **Answer:** yes. The COT hash is authenticated with `0x377`.
+- **Answer:** yes. The COT hash is authenticated with [`0x377`](../specs/08_errors-and-logging.md#boot-error-codes).
 - **What we learned:**
   - Size, alignment, and magic rejections restore cleanly; an auth failure
     leaves WPR2 up.
   - The FSP arms WPR2 before authenticating.
-  - Code map after this run: `0x83d`, `0xd9`, `0xd6`, `0x827`, `0x377`, `0xaff`.
+  - Code map after this run: [`0x83d`](../specs/08_errors-and-logging.md#boot-error-codes), `0xd9`, `0xd6`, `0x827`, `0x377`, `0xaff`.
 - **Related:**
   - The [key anchor](#0518-cot-public-key-anchored) is a distinct code
     (`0x1db`).
@@ -873,7 +873,7 @@ GPU1 (41:00.0) pre-FMC   = fffffb8f fffffb8f 01000280 00888888 002a2aaa 00000233
 GPU1 (41:00.0) post-boot = fffffb8f fffffb8f 01000280 00888888 002a2aaa 00000233 00c36180 21240001 00000002 00000003
 ```
 
-The per-card `SS0`/`SS1` and the `0x823808` bit-8 difference are already present
+The per-card [`SS0`](../specs/03_register-map.md#ss0-and-ss1)/`SS1` and the [`0x823808`](../specs/03_register-map.md#feat-bank) bit-8 difference are already present
 before the FMC runs.
 
 **Result.**
@@ -922,8 +922,8 @@ FSP response reported error. Task ID: 0x1 Command type: 0x14 Error code: 0x1db
 ```
 
 One send per card; every retry then hit `unexpected WPR2 already up`, then
-`RmInitAdapter failed! (0x62:0x40:2168)`. The driver maps `0x1db` to
-`NV_ERR_GENERIC` (`0x40`) because it is not in `kern_fsp_retval.h`.
+`RmInitAdapter failed! ([0x62](../specs/08_errors-and-logging.md#nv-status-codes):0x40:2168)`. The driver maps [`0x1db`](../specs/08_errors-and-logging.md#boot-error-codes) to
+[`NV_ERR_GENERIC`](../specs/08_errors-and-logging.md#nv-status-codes) (`0x40`) because it is not in `kern_fsp_retval.h`.
 
 **Result.**
 
@@ -996,7 +996,7 @@ Tamper with the COT stock:
 
 | Change | FSP response | WPR2 |
 |---|---|---|
-| ciphertext `0x1048` `0xee`→`0xef` | `0x33` (task `0x1`, cmd `0x14`) | left up |
+| ciphertext `0x1048` `0xee`→`0xef` | [`0x33`](../specs/08_errors-and-logging.md#boot-error-codes) (task `0x1`, cmd `0x14`) | left up |
 | header `0x00` `0x03`→`0x02` | `0x33` | left up |
 
 The tampered dump has SHA-256
@@ -1036,8 +1036,8 @@ them?
 **Method.**
 
 - Tool: `tools/driver-harness/featbank_writer_probe.sh` reads only
-  `0x823800`–`0x823824` plus controls (`PMC_BOOT_0`, WPR2, FSP scratch/status,
-  GSP engine/reset PLM, the bank's read/write permission mask) through BAR0. It writes one CSV row per sample.
+  `0x823800`–`0x823824` plus controls ([`PMC_BOOT_0`](../specs/03_register-map.md#chip-wpr-and-boot-targets), WPR2, FSP scratch/status,
+  GSP engine/reset [PLM](../specs/02_privilege-and-rate-control.md#privilege-levels-and-the-plm), the bank's read/write permission mask) through BAR0. It writes one CSV row per sample.
 - Target: both cards, root.
 - Samples: early boot (`pre`, before `systemd-udev-trigger`), post-driver, 60 s
   (`late`), and shutdown, across five cold power cycles and two warm reboots.
@@ -1066,14 +1066,14 @@ Across boots:
 
 The words changed only across cold power cycles; both warm reboots reproduced the
 prior values exactly. `0x823808` moved once (`41:00.0` `0x01000280` → `0x00000080`).
-`FEAT_READOUT_1` was `0x00c36180` in every sample, and every nibble of every SS
+[`FEAT_READOUT_1`](../specs/03_register-map.md#readout-decode) was `0x00c36180` in every sample, and every nibble of every SS
 word stayed below 8 (no override enable). Link speed/width was constant
 `16.0 GT/s x16`, so the moving bits do not track link training.
 
 With `41:00.0` unbound and FLR'd, SS0/SS1/`0x823808`/`READOUT_1` persisted
-unchanged while WPR2 reset and the GSP became inaccessible. `FEAT_OVR_PLM`
-(`0x823800`/`0x823804`) changed from `0xfffffb8f` to `0x80842bcf` and was restored
-to `0xfffffb8f` after the rebind. `0x80842bcf` decodes as read mask `0xf`, write
+unchanged while WPR2 reset and the GSP became inaccessible. [`FEAT_OVR_PLM`](../specs/03_register-map.md#write-gate)
+(`0x823800`/[`0x823804`](../specs/03_register-map.md#write-gate)) changed from `0xfffffb8f` to `0x80842bcf` and was restored
+to `0xfffffb8f` after the rebind. [`0x80842bcf`](../specs/02_privilege-and-rate-control.md#privilege-levels-and-the-plm) decodes as read mask `0xf`, write
 mask `0xc` (PL2+[PL3](../specs/02_privilege-and-rate-control.md)), source-enable `0x80842`; `0xfffffb8f` is read-all /
 write-PL3.
 
@@ -1098,7 +1098,7 @@ write-PL3.
 
 **Why.**
 
-- The FLR leaves the PLM at `0x80842bcf`, which admits PL2 writes.
+- The FLR leaves the PLM at [`0x80842bcf`](../specs/02_privilege-and-rate-control.md#privilege-levels-and-the-plm), which admits PL2 writes.
 - If the host or GSP-RM does the re-lock, the timing is a lever; if a GPU-side
   devinit does it, the window is closed before the host can use it.
 - What it would give: the re-lock bracket, or a usable window.
@@ -1213,12 +1213,12 @@ Layout of the 1 MiB image (the 2 MiB aperture is the same image at `+0x38000`):
 | `0x70` token | data `0x10C1` → table pointer `0x4CE9D` → table `0x64E9D` |
 | Ucode table | version 1, header 6, stride 6, 35 entries |
 | Real images | `0x07`/tgt `0x06` (`0x6FDA0`, body `0x6FDF0`–`0x8FFF0`), `0x19`/tgt `0x01` (`0x8FFF0`, body `0x90040`–`0xB1B40`), `0x15`/tgt `0x01` (`0xB1C30`, body `0xB1C80`–`0xB7780`), `0x23`/tgt `0x0E` (`0xB77BC`, body `0xB780C`–`0xD5A0C`) |
-| Placeholders | `0x18`/tgt `0x01` (`0xD6104`) and `0x24`/tgt `0x0F` (`0xE3304`) both read `0xBADF1100` |
+| Placeholders | `0x18`/tgt `0x01` (`0xD6104`) and `0x24`/tgt `0x0F` (`0xE3304`) both read [`0xBADF1100`](../specs/08_errors-and-logging.md#data-sentinels-and-bad-reads) |
 
 All four real descriptors are v6, size `0x50`, encrypted bit set, body entropy
 8.0. App `0x23`'s body is 64 KiB encrypted code (`0xB780C`–`0xC780C`), a ~2 KiB
 header (`0xC780C`–`0xC8000`), then plaintext data (`0xC8000`–`0xD5A0C`, entropy
-2–3) with a `0xBADF5040` poison field and the PLM values.
+2–3) with a [`0xBADF5040`](../specs/08_errors-and-logging.md#data-sentinels-and-bad-reads) poison field and the PLM values.
 
 The GSP-RM string table carries the DEVINIT authentication errors:
 
@@ -1266,7 +1266,7 @@ host-controlled length before authenticating?
 
 **Why.**
 
-- `sysmemAddrOfBootloader`, `sizeOfBootloader`, and the in-image offsets are
+- `sysmemAddrOfBootloader`, [`sizeOfBootloader`](../specs/01_boot-chain.md#wprmeta), and the in-image offsets are
   host-filled, plus a 4 KB signature buffer.
 - A host-controlled length or offset in a copy/parse ahead of the check would be
   the GB202 analogue of the Ada `BooterLoadUcode` bug.
@@ -1300,15 +1300,15 @@ The field matrix, one field per run:
 
 | Field (oracle #) | Value | Result |
 |---|---|---|
-| `sizeOfBootloader` (8) | `0x47001` | **`0x82e`** on both cards; the length is checked |
+| `sizeOfBootloader` (8) | `0x47001` | **[`0x82e`](../specs/08_errors-and-logging.md#boot-error-codes)** on both cards; the length is checked |
 | `sysmemAddrOfBootloader` (9) | none | not run |
 | `bootloaderCodeOffset` (10) | `0xffffffff` | boots; unchecked or unused |
 | `bootloaderDataOffset` (11) | `0xffffffff` | boots; unchecked or unused |
-| `bootloaderManifestOffset` (12) | `0xffffffff` | **`0x885`** on both cards; the offset is used |
+| `bootloaderManifestOffset` (12) | `0xffffffff` | **[`0x885`](../specs/08_errors-and-logging.md#boot-error-codes)** on both cards; the offset is used |
 | `sysmemAddrOfSignature` (13) | none | not run |
 | `sizeOfSignature` (14) | `0x100000` | boots; the verifier uses a fixed 0x1000 parse |
 | `sysmemAddrOfRadix3Elf` (15) | none | not run |
-| `sizeOfRadix3Elf` (16) | `0x100000` | **`0xaff`**, info `0xb`; bound into authentication |
+| `sizeOfRadix3Elf` (16) | `0x100000` | **[`0xaff`](../specs/08_errors-and-logging.md#boot-error-codes)**, info `0xb`; bound into authentication |
 
 The error lines:
 
@@ -1339,7 +1339,7 @@ Fatal GSP-FMC Error: version=0x1, partition=0x1, error code=0xaff, additional in
 
 **Why.**
 
-- The image sits in unprotected sysmem at `WprMeta.sysmemAddrOfBootloader`.
+- The image sits in unprotected sysmem at [`WprMeta.sysmemAddrOfBootloader`](../specs/01_boot-chain.md#wprmeta).
 - If the FMC decrypts in place, the 290,816-byte HS plaintext is readable at PL0
   after boot.
 - What it would give: the cheapest decrypted-firmware route, or proof it stays
@@ -1440,13 +1440,13 @@ fb_wprbin_gpu0_7f4270000.bin size=0x50000 nz=245760 ent=2.0000 head=00acd0ba00ac
 ```
 
 `0x01000000`, `0x5dd00000`, and `0x181d0000` read zero. The WPR range returns the
-repeating dword `0xbad0ac00` (entropy exactly 2.0, three nonzero bytes per dword).
+repeating dword [`0xbad0ac00`](../specs/08_errors-and-logging.md#data-sentinels-and-bad-reads) (entropy exactly 2.0, three nonzero bytes per dword).
 
 **Result.**
 
 - **Answer:** no. The FB/BAR1 route is closed by hardware.
 - **What we learned:**
-  - BAR1 does not exist during the boot: offsets are BAR1-VAS offsets, not FB
+  - [BAR1](../specs/07_memory-and-host-access.md#bar0-and-bar1) does not exist during the boot: offsets are BAR1-VAS offsets, not FB
     physical addresses, and the VAS is not built when the HS boot runs.
   - Do not repeat the mapping before `gpuStateLoad`; it oopses on a NULL PTE
     array.
@@ -1460,7 +1460,7 @@ repeating dword `0xbad0ac00` (entropy exactly 2.0, three nonzero bytes per dword
 
 ## 05.26 Non-WPR heap holds no RM objects
 
-**Question.** Does the 3 MiB GSP-RM non-WPR heap contain the live RM objects
+**Question.** Does the 3 MiB GSP-RM [non-WPR heap](../specs/07_memory-and-host-access.md#the-non-wpr-heap) contain the live RM objects
 behind the FEAT method, the config object, and the GR context/ucode descriptor?
 
 **Why.**
