@@ -37,13 +37,13 @@
 
 | ID | Experiment | Result |
 |---|---|---|
-| [01.1](#011-first-register-write-hits-a-crashed-gsp) | First register write hits a crashed GSP | Write untested; GSP already fatal |
-| [01.2](#012-speed-register-write-from-gsp-is-dropped) | Speed-register write from GSP is dropped | Success returned; value unchanged |
-| [01.3](#013-the-whole-feat-bank-shares-one-gate) | The whole FEAT bank shares one gate | No ungated register in bank |
-| [01.4](#014-the-fuse-shadow-and-the-inert-modifier) | The fuse shadow and the inert modifier | Fuse locked; rate modifier inert |
-| [01.5](#015-the-permission-mask-admits-pl3-writes-only) | The permission mask admits PL3 writes only | Write gate is PL3-only |
-| [01.6](#016-the-post-reset-window-closes-before-gsp-rm) | The post-reset window closes before GSP-RM | Window ends before GSP-RM exists |
-| [01.7](#017-per-context-registers-need-a-caller-owned-channel) | Per-context registers need a caller-owned channel | Context route closed at PL0 |
+| 01.1 | [First register write hits a crashed GSP](#011-first-register-write-hits-a-crashed-gsp) | Write untested; GSP already fatal |
+| 01.2 | [Speed-register write from GSP is dropped](#012-speed-register-write-from-gsp-is-dropped) | Success returned; value unchanged |
+| 01.3 | [The whole FEAT bank shares one gate](#013-the-whole-feat-bank-shares-one-gate) | No ungated register in bank |
+| 01.4 | [The fuse shadow and the inert modifier](#014-the-fuse-shadow-and-the-inert-modifier) | Fuse locked; rate modifier inert |
+| 01.5 | [The permission mask admits PL3 writes only](#015-the-permission-mask-admits-pl3-writes-only) | Write gate is PL3-only |
+| 01.6 | [The post-reset window closes before GSP-RM](#016-the-post-reset-window-closes-before-gsp-rm) | Window ends before GSP-RM exists |
+| 01.7 | [Per-context registers need a caller-owned channel](#017-per-context-registers-need-a-caller-owned-channel) | Context route closed at PL0 |
 
 ## 01.1 First register write hits a crashed GSP
 

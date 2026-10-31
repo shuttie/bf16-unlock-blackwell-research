@@ -1,51 +1,82 @@
-# SR-resume
+# The host-built suspend and resume state
 
-Recorded October 2026 on 2× RTX 5090 (GB202, `10de:2b85`), host driver and
-GSP-RM 595.91.07, Linux, CUDA 13. Both cards are suspended and resumed in one
-cycle.
+## Summary
 
-## Reproducing this group
+**The idea.**
 
-**Hardware.** 2× RTX 5090 (GB202, `10de:2b85`), host driver and GSP-RM 595.91.07,
-Linux, CUDA 13. The host builds `SRMeta` and the radix3; the FMC consumes them on
-resume.
+- A device-level suspend/resume (SR) cycle makes the host build two structures:
+  `SRMeta`, a 256-byte descriptor with the saved-state size, flags, and page-table
+  pointer; and a three-level radix3 page table that maps the saved state.
+- The FMC (first-stage mutable GPU firmware) consumes both on resume. The saved
+  state covers the region from the non-WPR heap through FRTS, the firmware
+  runtime state region inside the WPR, the write-protected firmware region.
+- I ran the stock cycle, changed `SRMeta.magic`, dumped the state, and parsed the
+  page table.
 
-**Tools.** [Driver harness](../tools/driver-harness/) with the SR scripts:
-`sr_resume_test.sh` (stock cycle), `sr_oracle.sh` (field override), and
-`sr_dump_test.sh` (state dump). They build an instrumented 595.91.07 tree, load it,
-trigger the cycle, and restore stock in a trap. Root is required. The analyzers are
-`analyze_srdump.py`, `analyze_srdump2.py`, and `analyze_ptes.py`.
+**What it found.**
 
-**Inputs.** The 595.91.07 open driver tree, the stock firmware already in
-`/lib/firmware`, and root. No extra images. The dumps are written locally and are
-not part of this repo.
+- The [host builds SRMeta and the
+  radix3](#061-the-suspend-and-resume-cycle-is-host-driven) in unprotected
+  memory; both cards resume in about 8 s.
+- A [wrong SRMeta.magic hangs the
+  resume](#062-a-bad-srmeta-magic-hangs-the-resume) with no host-visible error.
+- The [saved state is 205.875 MiB of high-entropy
+  data](#063-the-saved-state-is-high-entropy-ciphertext) with none of the
+  selector constants.
+- The [radix3 is plaintext and fully
+  mapped](#064-the-radix3-is-plaintext-and-fully-mapped); the data pages are
+  per-boot and per-card ciphertext.
 
-**Boot state and cost.** Start from a clean boot with the stock driver loaded, no
-Xid, and both cards visible. The stock cycle takes about 8 s and returns without a
-reboot. A bad SR field hangs the resume; journald freezes before the failure, so add
-netconsole or phase markers first. Every failed variant costs a reboot.
+**What it did not find.**
 
-**Terms.** SR is suspend/resume. `SRMeta` is the 256-byte host-built descriptor that
-carries the saved-state size, flags, and radix3 pointer. The radix3 is a three-level
-page table, built by the host in unprotected memory, that maps the saved state.
-FRTS is the firmware runtime state region inside the WPR, the write-protected
-firmware region. The non-WPR heap is the unprotected allocation outside it. See the
-[boot-chain spec](../specs/01_boot-chain.md) and the
-[memory spec](../specs/07_memory-and-host-access.md).
+- The [cipher or key](#063-the-saved-state-is-high-entropy-ciphertext) for the
+  saved state.
+- Whether [Heavy Secure (HS) validates
+  SRMeta](#062-a-bad-srmeta-magic-hangs-the-resume) or [the page-table
+  entries](#064-the-radix3-is-plaintext-and-fully-mapped).
 
-## E42 · The SR path is live and host-driven
+## Experiments
 
-*2026-10-26 · Revision 41 · status: LIVE*
+| ID | Experiment | Result |
+|---|---|---|
+| 06.1 | [The suspend and resume cycle is host-driven](#061-the-suspend-and-resume-cycle-is-host-driven) | Host builds SRMeta and radix3 |
+| 06.2 | [A bad SRMeta magic hangs the resume](#062-a-bad-srmeta-magic-hangs-the-resume) | Hang; no error code |
+| 06.3 | [The saved state is high-entropy ciphertext](#063-the-saved-state-is-high-entropy-ciphertext) | 205.875 MiB; no selectors |
+| 06.4 | [The radix3 is plaintext and fully mapped](#064-the-radix3-is-plaintext-and-fully-mapped) | 52,704 PTEs; per-boot data |
 
-**Hypothesis.** A device-level suspend/resume cycle exercises the SR path, and the
-host builds `SRMeta` plus the radix3 that the FMC consumes on resume.
+## 06.1 The suspend and resume cycle is host-driven
 
-**Instrument.** [Driver harness](../tools/driver-harness/) `sr_resume_test.sh`,
-which builds and loads the instrumented 595.91.07 tree, triggers the cycle, captures
-dmesg, and restores stock in a trap. Root required.
+**Question.** Does a device-level suspend/resume cycle exercise the SR path, and
+does the host build `SRMeta` plus the radix3 that the FMC consumes on resume?
 
-**Method.** Run a device-level s2idle test cycle, capture the `SRMeta` and FMC boot
-parameter lines, and check that both cards return.
+**Why.**
+
+- The host controls the suspend descriptor and page table. If they are plaintext,
+  they are a host-facing input surface.
+- The [4090 unlock](https://github.com/JustAResearcher/gpu-unlock-ada) wrote the
+  selector from a PL3 boot image; the SR path is another place where host-built
+  data reaches secure firmware.
+- What it would give: a live host-to-FMC input surface, or confirmation that the
+  cycle is closed.
+
+**Method.**
+
+- Tool: `sr_resume_test.sh` from [driver harness](../tools/driver-harness/),
+  which builds and loads the instrumented 595.91.07 tree, captures dmesg, and
+  restores stock in a trap. Root required.
+- Target: both RTX 5090s in one cycle.
+- Steps:
+  - Trigger a device-level s2idle cycle.
+  - Capture the `SRMeta` and FMC boot parameter lines.
+  - Check that both cards return.
+- Trigger: write `devices` to `/sys/power/pm_test`, then `mem` to
+  `/sys/power/state`.
+- Args used:
+```bash
+sudo tools/driver-harness/sr_resume_test.sh
+echo devices > /sys/power/pm_test
+echo mem > /sys/power/state
+```
 
 **Observed data.** Captured dmesg from the stock cycle:
 
@@ -60,37 +91,55 @@ Restarting tasks: Done
 
 The second card printed the same fields with `radix3Addr=0x1af000000`.
 
-**Result.** The host builds `SRMeta` and the radix3 in unprotected memory and hands
-the descriptor to the FMC on resume. Both `SRMeta` sizes are `0xcde0000`, matching
-the WPR span measured at boot. Both cards return in about 8 s.
+**Result.**
 
-**Reproduce.**
-1. Build and load the instrumented tree:
-   `sudo tools/driver-harness/sr_resume_test.sh` (the script does both and restores
-   stock in its trap).
-2. Trigger the cycle:
-   `echo devices > /sys/power/pm_test; echo mem > /sys/power/state`.
-3. The machine returns in about 8 s. Capture `dmesg` and `nvidia-smi -L`.
-4. Expect two `SRMeta` lines with `size=0xcde0000`, the FRTS/non-WPR inputs, and
-   `bootMode=1` on resume.
+- **Answer:** yes. The host builds `SRMeta` and the radix3 in unprotected memory
+  and hands the descriptor to the FMC on resume. Both cards return in about 8 s.
+- **What we learned:**
+  - Both `SRMeta` sizes are `0xcde0000`, matching the WPR span measured at boot
+    ([memory and host access](../specs/07_memory-and-host-access.md)).
+  - The descriptor carries `magic=0x8a3bb9e6c6c39d93`, `rev=2`, `flags=0`, the
+    FRTS/non-WPR inputs, and a per-card `radix3Addr`.
+  - The resume uses `bootMode=1` and the host-built descriptor instead of
+    `WprMeta`, the cold-boot descriptor ([boot chain](../specs/01_boot-chain.md)).
+  - The page table is built in unprotected sysmem, so the structure is readable.
+- **Related:**
+  - The [bad-magic run](#062-a-bad-srmeta-magic-hangs-the-resume) tests whether
+    the FMC consumes the descriptor.
+  - The [state dump](#063-the-saved-state-is-high-entropy-ciphertext) reads the
+    mapped state.
+- **Open question:** does HS validate the descriptor? This run shows the host
+  builds and passes it, not that firmware checks it.
 
-**Limits.** Shows the host builds and passes the descriptor and that the cycle
-returns. It does not show whether HS validates the structure.
+## 06.2 A bad SRMeta magic hangs the resume
 
-## E43 · A bad SRMeta magic hangs the resume
+**Question.** Does the FMC/SR code consume `SRMeta.magic`, and does a wrong magic
+return an error or hang?
 
-*2026-10-26 · Revision 42 · status: hang, blind*
+**Why.**
 
-**Hypothesis.** The FMC/SR code consumes `SRMeta.magic`; a wrong magic hangs the
-resume instead of returning an error.
+- If the magic is unchecked, the host can hand arbitrary descriptors to secure
+  firmware.
+- If it hangs, the SR path is a blind probe surface: no host log, and every
+  attempt costs a reboot.
+- What it would give: evidence that the FMC parses the descriptor, and a warning
+  about the cost of probing it.
 
-**Instrument.** [Driver harness](../tools/driver-harness/) `sr_oracle.sh 1`, which
-sets `BF16_SR_VARY=1` and `BF16_SR_VALUE=0xdeadbeefdeadbeef`, rebuilds, loads, and
-triggers the same cycle.
+**Method.**
 
-**Method.** Run the stock cycle with only the magic changed, then inspect the
-previous boot's log. Add netconsole or phase markers first, because journald freezes
-before the failure.
+- Tool: `sr_oracle.sh 1` from [driver harness](../tools/driver-harness/), which
+  sets `BF16_SR_VARY=1` and `BF16_SR_VALUE=0xdeadbeefdeadbeef`, rebuilds, loads,
+  and triggers the same cycle.
+- Target: both cards.
+- Steps:
+  - Run the stock cycle with only the magic changed.
+  - Inspect the previous boot's log.
+  - Add netconsole or phase markers first, because journald freezes before the
+    failure.
+- Args used:
+```bash
+sudo tools/driver-harness/sr_oracle.sh 1
+```
 
 **Observed data.** The captured run log ends at the trigger:
 
@@ -109,43 +158,55 @@ Filesystems sync: 0.039 seconds
 No later line was flushed. The kernel never resumed, so there is no post-freeze
 dmesg.
 
-**Result.** The machine enters suspend and does not return. The stock cycle
-([E42](#e42--the-sr-path-is-live-and-host-driven)) returns with the same build and
-trigger, so the hang is attributable to the magic. The failure is a hang, not a
-structured error.
+**Result.**
 
-**Reproduce.**
-1. Prepare an out-of-band log:
-   - boot with a netconsole target on the kernel command line, or
-   - add phase markers in the driver hooks at prepare / save / resume-start /
-     restore-done, written to `/run/sr.phase`.
-2. Run `sudo tools/driver-harness/sr_oracle.sh 1`; it rebuilds, loads, and triggers
-   the cycle.
-3. The machine will not return. Reboot after a few minutes.
-4. Check the previous boot log (`journalctl -k -b -1 | tail`). Without a console it
-   ends at `Filesystems sync`; with netconsole or phase markers it shows the last
-   stage reached.
-5. Compare with the stock cycle ([E42](#e42--the-sr-path-is-live-and-host-driven)),
-   which returns with the same build and trigger.
+- **Answer:** the machine enters suspend and does not return. The stock cycle
+  returns with the same build and trigger, so the hang is attributable to the
+  magic. The failure is a hang, not a structured error.
+- **What we learned:**
+  - The FMC/SR code consumes `SRMeta.magic`; a wrong value prevents resume.
+  - The failure leaves no host-visible log: journald freezes before post-freeze
+    printk flushes.
+  - Probing non-stock descriptors needs netconsole, serial, or phase markers
+    written to `/run/sr.phase`.
+  - Every failed variant costs a reboot.
+- **Related:**
+  - The [stock cycle](#061-the-suspend-and-resume-cycle-is-host-driven) is the
+    control that returns.
+  - The [plaintext radix3](#064-the-radix3-is-plaintext-and-fully-mapped) is the
+    next structural surface.
+- **Open question:** whether HS validates the descriptor before the magic check,
+  and which later stage hangs, need out-of-band logging.
 
-**Limits.** The hang is attributable to the magic only because the stock control
-returns. A failed resume leaves no host log; finer results need netconsole, serial,
-or phase markers, and every attempt costs a reboot.
+## 06.3 The saved state is high-entropy ciphertext
 
-## E45 · The SR suspend image is encrypted
+**Question.** Is the saved SR state encrypted, and can it be edited to change
+selectors?
 
-*2026-10-26 · Revision 44 · status: state editing closed*
+**Why.**
 
-**Hypothesis.** The saved SR state is encrypted, so editing it to change selectors
-does not work.
+- The state is restored into secure firmware. If it were plaintext, the host
+  could edit it to change rate selectors.
+- If it is ciphertext, state editing is closed and the remaining surface is the
+  page table.
+- What it would give: a plaintext state-editing path, or proof that the state is
+  opaque.
 
-**Instrument.** [Driver harness](../tools/driver-harness/) `sr_dump_test.sh` with
-`BF16_SRDUMP=1`. At the resume FMC setup it maps the state region in 16 MiB chunks
-and writes one file per card.
+**Method.**
 
-**Method.** Read `SRMeta`, compute the data region as the tail of the radix3
-allocation, dump it, and scan every 32-bit word. The data offset is
-`0xce49000 - 0xcde0000 = 0x69000`.
+- Tool: `sr_dump_test.sh` from [driver harness](../tools/driver-harness/) with
+  `BF16_SRDUMP=1`. At the resume FMC setup it maps the state region in 16 MiB
+  chunks and writes one file per card.
+- Target: both cards.
+- Steps:
+  - Read `SRMeta`; compute the data region as the tail of the radix3 allocation.
+  - Dump it and scan every 32-bit word.
+  - The data offset is `0xce49000 - 0xcde0000 = 0x69000`.
+- Args used:
+```bash
+sudo tools/driver-harness/sr_dump_test.sh
+python3 -I tools/driver-harness/analyze_srdump2.py <run>/sr_0.bin <run>/sr_1.bin
+```
 
 **Observed data.** Captured run log:
 
@@ -175,6 +236,10 @@ equal bytes inside card0-nonzero chunks: 2258261
 
 **Result.**
 
+- **Answer:** the saved state is high-entropy ciphertext and contains none of the
+  selector constants. Editing it as plaintext does not work.
+- **What we learned:**
+
 | Metric | Value |
 |---|---|
 | State size | 205.875 MiB (215,875,584 B; 205 × 1 MiB chunks) |
@@ -186,35 +251,43 @@ equal bytes inside card0-nonzero chunks: 2258261
 | Bytes equal between cards outside zero chunks | 2,258,261 of ~108 MiB |
 | FEAT/selector constants | 0 |
 
-The saved state is high-entropy and contains none of the selector constants.
-`0xcde0000` is 215,875,584 bytes, so the 205 chunks are the measurement.
+- `0xcde0000` is 215,875,584 bytes, so the 205 chunks are the measurement.
+- **Related:**
+  - The [stock cycle](#061-the-suspend-and-resume-cycle-is-host-driven) provides
+    the descriptor and the state size.
+  - The [plaintext radix3](#064-the-radix3-is-plaintext-and-fully-mapped) is the
+    readable structure that maps this state.
+- **Open question:** the cipher and key are not identified. The state cannot be
+  edited as plaintext, but it is not decrypted here.
 
-**Reproduce.**
-1. Run `sudo tools/driver-harness/sr_dump_test.sh`. It rebuilds, loads, triggers the
-   cycle, and writes one state file per card.
-2. The files are about 216 MB each (`0xcde0000` bytes) and stay local.
-3. Analyze:
-   `python3 -I tools/driver-harness/analyze_srdump2.py <run>/sr_0.bin <run>/sr_1.bin`.
-4. Expect 205 chunks, 97 zero on each card, the same zero mask, entropy near 7.9998
-   in the nonzero chunks, and no FEAT/selector constants.
+## 06.4 The radix3 is plaintext and fully mapped
 
-**Limits.** Shows the saved state is high-entropy and contains none of the selector
-constants. It does not identify the cipher or key; it rules out editing the state as
-plaintext.
+**Question.** Is the radix3 page table plaintext and fully mapped, while the saved
+data pages are per-boot and per-card ciphertext?
 
-## E46 · Plaintext radix3, per-boot ciphertext
+**Why.**
 
-*2026-10-26 · Revision 45 · status: structure mapped*
+- The radix3 is host-built and maps the state. A malformed entry is a structural
+  probe into secure firmware.
+- If it is plaintext, the host controls the mapping the FMC walks on resume.
+- What it would give: a readable mapping and a possible structural surface, or
+  proof the state is opaque end to end.
 
-**Hypothesis.** The radix3 page table is plaintext and fully mapped, while the saved
-data pages are per-boot and per-card ciphertext.
+**Method.**
 
-**Instrument.** A second [Driver harness](../tools/driver-harness/)
-`sr_dump_test.sh` run with the hook extended to the whole descriptor, then
-`analyze_ptes.py`.
-
-**Method.** Dump the whole descriptor (`0xce49000` per card; state `0xcde0000`, data
-at `0x69000`) and parse the root, L1, and L2 levels.
+- Tool: a second `sr_dump_test.sh` run from
+  [driver harness](../tools/driver-harness/) with the hook extended to the whole
+  descriptor, then `analyze_ptes.py`.
+- Target: both cards.
+- Steps:
+  - Dump the whole descriptor (`0xce49000` per card; state `0xcde0000`, data at
+    `0x69000`).
+  - Parse the root, L1, and L2 levels.
+- Args used:
+```bash
+sudo tools/driver-harness/sr_dump_test.sh
+python3 -I tools/driver-harness/analyze_ptes.py <run>/sr_0.bin <run>/sr_1.bin
+```
 
 **Observed data.** Captured run log:
 
@@ -243,34 +316,34 @@ within-run equal 4K pages: 25277/52809
 
 **Result.**
 
+- **Answer:** yes. The radix3 is plaintext and fully mapped; the saved data pages
+  are per-boot and per-card ciphertext.
+- **What we learned:**
+
 | Level | Content |
 |---|---|
 | root (1 page) | `root[0]` → L1 at `+0x1000` |
 | L1 (1 page) | `L1[0..102]` → 103 L2 pages |
-| L2 (103 pages) | 52,704 nonzero, unique, 4K-aligned PTEs in 52,736 slots |
+| L2 (103 pages) | 52,704 nonzero, unique, 4K-aligned PTEs (page-table entries) in 52,736 slots |
 
-The data pages sit in 52 physical runs, mostly 1,024 pages (4 MiB); card0 starts at
-`0x1c2c69000`. 25,277 of the 52,704 state pages are zero, with the same mask every
-run.
+- The data pages sit in 52 physical runs, mostly 1,024 pages (4 MiB); card0
+  starts at `0x1c2c69000`.
+- 25,277 of the 52,704 state pages are zero, with the same mask every run.
+- The `0x1000` delta dominates, so the data pages sit in contiguous 4 MiB runs.
+  The two cards use different physical ranges.
+- The analyzer counts the whole descriptor (52,809 pages); the state is 52,704
+  pages, and the other 105 pages are the radix3 head.
 
 | Comparison | Nonzero pages | Equal |
 |---|---:|---:|
 | Same card, previous boot | 27,322 | 0 |
 | Other card, same cycle | 27,427 | 0 |
 
-The `0x1000` delta dominates, so the data pages sit in contiguous 4 MiB runs. The
-two cards use different physical ranges. The analyzer counts the whole descriptor
-(52,809 pages); the state is 52,704 pages, and the other 105 pages are the radix3
-head.
-
-**Reproduce.**
-1. Run `sudo tools/driver-harness/sr_dump_test.sh` with the whole-descriptor hook.
-2. It writes `sr_0.bin` and `sr_1.bin`, about 216 MB each.
-3. Analyze:
-   `python3 -I tools/driver-harness/analyze_ptes.py <run>/sr_0.bin <run>/sr_1.bin`.
-4. Expect one root entry, 103 L1 entries, 52,704 nonzero L2 PTEs, all 4K-aligned,
-   and different PTE lists per card.
-
-**Limits.** Shows the page table is plaintext and fully mapped, and the saved data
-pages differ per card. It does not show whether HS validates the PTEs; that remains
-open.
+- **Related:**
+  - The [stock cycle](#061-the-suspend-and-resume-cycle-is-host-driven) builds the
+    descriptor.
+  - The [state dump](#063-the-saved-state-is-high-entropy-ciphertext) shows the
+    mapped data is ciphertext.
+- **Open question:** whether HS validates the PTEs before walking them. A
+  malformed entry is the remaining structural probe, but a failed resume hangs
+  with no host log.

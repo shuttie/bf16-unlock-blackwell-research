@@ -60,7 +60,7 @@ Selected registers, GSP view. Values are stock on GB202. [measured]
 The IMEM and DMEM ports do not exist on this RISC-V GSP, so there is no window
 onto local instruction or data memory. The 8 KB EMEM window is real storage, but
 it read zero at the sample point and held nothing. See
-[E10](../experiments/04_hs-sec2-fsp-memory.md#e10--the-hs-memory-read-route).
+[E10](../experiments/04_hs-sec2-fsp-memory.md#041-gsp-emem-is-real-but-empty).
 [measured]
 
 ## 3. PRISCV register map
@@ -113,7 +113,7 @@ The practical split: the host can reach the ICD and the host-side tables; the GS
 can reach the core state and the trace registers. The PC register is per-master.
 The host's `0x1113ec` matches the ICD `RPC` when the block is accessible; the
 GSP-side `0x01404f66` is a different register, not the current PC.
-[measured; see [E63](../experiments/04_hs-sec2-fsp-memory.md#e63--the-risc-v-priscv-block-and-its-two-sided-hostgsp-map)]
+[measured; see [E63](../experiments/04_hs-sec2-fsp-memory.md#043-priscv-block-is-split-per-master)]
 
 ## 5. ICD command engine
 
@@ -173,7 +173,7 @@ The host `0x1113ec` reads `0x93002ebc`, matching `RPC`; the GSP master's
 `0x1113ec` reads `0x01404f66`. The driver's own core-dump path uses the same
 ICD: after `STOP` it reads CSRs, attempts an `RDM` stack unwind, and raises
 Xid 154. The Linux ICD wrappers are an API layer, not the hardware gate.
-[measured; see [E67](../experiments/04_hs-sec2-fsp-memory.md#e67--the-priscv-icd-is-live-host-command-execution-and-a-144-mb-halted-core-read-window)]
+[measured; see [E67](../experiments/04_hs-sec2-fsp-memory.md#044-priscv-icd-is-a-live-debug-port)]
 
 ## 6. RDM aperture and address model
 
@@ -214,7 +214,7 @@ image. [measured]
 
 The `0x01000000` address is in the core's space, not a host framebuffer physical
 address. The host physical address `0x01000000` reads zero; the backing is inside
-the WPR. See [E74](../experiments/05_fmc-fsp-boot-inputs.md#e74--the-fb-route-is-shut-bar1-has-no-boot-time-vas-and-the-wpr-returns-0xbad0ac00).
+the WPR. See [E74](../experiments/05_fmc-fsp-boot-inputs.md#0525-fb-route-shut).
 [measured]
 
 ## 7. Boot-window gate
@@ -240,7 +240,7 @@ After full boot the aperture is the RM code segment only: `0xEFD00000`,
 plaintext GSP-RM contains no ICD-enable write; its only PRISCV writes are
 `IRQDEST`/`0x111520` setup and `ICD_CMD=0` in fatal self-halt paths. The refusal
 is a hardware/firmware privilege gate. See
-[E68](../experiments/04_hs-sec2-fsp-memory.md#e68--the-boot-window-icd-blocked-through-hs-rdm-gated-the-boot-image-at-0xefd00000).
+[E68](../experiments/04_hs-sec2-fsp-memory.md#045-boot-window-icd-route-is-blocked).
 [measured]
 
 ## 8. The FSP has no ICD
@@ -256,17 +256,17 @@ and the GSP finds no PRISCV core interface at either placement. [measured]
 Implemented outliers are `0x8f1274`, `0x8f1298`, and `0x8f129c`, plus two
 12-byte-stride tables at `0x8f1f00` and `0x8f1f80`. The `0x8f3000` block carries
 `0xffffff8f` PLMs. None of it is a command engine, so the FSP is not a
-debug-port target. [measured; see [E68](../experiments/04_hs-sec2-fsp-memory.md#e68--the-boot-window-icd-blocked-through-hs-rdm-gated-the-boot-image-at-0xefd00000)]
+debug-port target. [measured; see [E68](../experiments/04_hs-sec2-fsp-memory.md#045-boot-window-icd-route-is-blocked)]
 
 ## 9. Evidence map
 
 | Claim | Experiment | Status |
 |---|---|---|
-| Two blocks; base `0x111000`; partition counts | [E63](../experiments/04_hs-sec2-fsp-memory.md#e63--the-risc-v-priscv-block-and-its-two-sided-hostgsp-map) | measured |
-| ICD is live at PL0; command behavior; 14.4 MB code window | [E67](../experiments/04_hs-sec2-fsp-memory.md#e67--the-priscv-icd-is-live-host-command-execution-and-a-144-mb-halted-core-read-window) | measured |
-| Boot-window block; RDM refusal; FSP has no ICD | [E68](../experiments/04_hs-sec2-fsp-memory.md#e68--the-boot-window-icd-blocked-through-hs-rdm-gated-the-boot-image-at-0xefd00000) | measured |
-| Host PA `0x01000000` is empty; backing is in the WPR | [E74](../experiments/05_fmc-fsp-boot-inputs.md#e74--the-fb-route-is-shut-bar1-has-no-boot-time-vas-and-the-wpr-returns-0xbad0ac00) | measured |
-| GSP EMEM is empty at runtime | [E10](../experiments/04_hs-sec2-fsp-memory.md#e10--the-hs-memory-read-route) | measured |
+| Two blocks; base `0x111000`; partition counts | [E63](../experiments/04_hs-sec2-fsp-memory.md#043-priscv-block-is-split-per-master) | measured |
+| ICD is live at PL0; command behavior; 14.4 MB code window | [E67](../experiments/04_hs-sec2-fsp-memory.md#044-priscv-icd-is-a-live-debug-port) | measured |
+| Boot-window block; RDM refusal; FSP has no ICD | [E68](../experiments/04_hs-sec2-fsp-memory.md#045-boot-window-icd-route-is-blocked) | measured |
+| Host PA `0x01000000` is empty; backing is in the WPR | [E74](../experiments/05_fmc-fsp-boot-inputs.md#0525-fb-route-shut) | measured |
+| GSP EMEM is empty at runtime | [E10](../experiments/04_hs-sec2-fsp-memory.md#041-gsp-emem-is-real-but-empty) | measured |
 | Register offsets and PLM encoding | [register map](../specs/03_register-map.md), [privilege and rate control](../specs/02_privilege-and-rate-control.md) | measured/source |
 
 Tools: [Register access](../tools/register-access/) for the GSP and host register
