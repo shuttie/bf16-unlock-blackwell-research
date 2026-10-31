@@ -6,8 +6,9 @@ and [3090](https://github.com/Zagitta/gpu-unlock) cards.
 
 1. **Can I unlock my 5090?** Not yet. Blackwell uses a completely different boot
    process, so the 3090/4090 exploits don't work.
-2. **Is it the silicon?** No. The same GB202 die runs BF16 at full rate in the RTX
-   PRO 6000.
+2. **Is it the silicon?** No. The same [GB202](../specs/03_register-map.md) die
+   runs BF16 at full rate in the [RTX PRO
+   6000](../specs/02_privilege-and-rate-control.md#the-cap-is-product-segmentation).
 3. **What's in the repo?**
    - [the cap, and how the 3090/4090 unlock worked](#the-cap-and-the-30904090-unlock)
    - [Blackwell's boot chain and why the old route is closed](#blackwells-boot-chain-and-why-the-old-route-is-closed)
@@ -28,10 +29,12 @@ This is research. I'm not redistributing NVIDIA firmware.
 ## The cap and the 3090/4090 unlock
 
 **The cap.** A consumer 5090 uses the same GB202 die as an RTX PRO 6000. NVIDIA
-sells the consumer card with a 1/2 throughput limit on the FP32-accumulate path.
+sells the consumer card with a 1/2 throughput limit on the
+[FP32-accumulate path](../specs/02_privilege-and-rate-control.md#the-cap-is-product-segmentation).
 Every BF16 tensor op uses that path, so BF16 lands at half rate. The limit is a
-fuse-programmed 3-bit selector. The professional card runs the same path at full
-rate.
+fuse-programmed [3-bit
+selector](../specs/02_privilege-and-rate-control.md#selector-encoding). The
+professional card runs the same path at full rate.
 
 **The chain.** From fuse to issue rate:
 
@@ -41,10 +44,12 @@ rate.
                    FEAT_OVR_PLM  (write gate: PL3 only)
 ```
 
-`SS0` and `SS1` are the override words in the FEAT register bank. FECS/GPCCS is the
-GPU's front-end and context-switch microcode; SM is the streaming multiprocessor.
-The PLM is the bank's read/write permission mask; on the 5090 its write field
-admits only PL3, the level where NVIDIA's boot firmware runs.
+`SS0` and `SS1` are the override words in the [FEAT register
+bank](../specs/03_register-map.md#feat-bank). [FECS/GPCCS](../specs/03_register-map.md#fecs)
+is the GPU's front-end and context-switch microcode; SM is the streaming
+multiprocessor. The [PLM](../specs/02_privilege-and-rate-control.md#privilege-levels-and-the-plm)
+is the bank's read/write permission mask; on the 5090 its write field admits only
+PL3, the level where NVIDIA's boot firmware runs.
 
 **The measured baseline.**
 
@@ -78,15 +83,17 @@ work on GB202: it gives no known-answer match, and the full 16! search over the
 key's [permutation family came back
 empty](experiments/07_plaintext-corpus.md#0710-the-fmc-key-search-comes-back-negative).
 
-- A kernel module starts a signed SEC2 boot image. SEC2 is the GPU's security
-  coprocessor.
+- A kernel module starts a signed [SEC2](../specs/01_boot-chain.md#sec2) boot
+  image. SEC2 is the GPU's security coprocessor.
 - The booter copies signature data with a length the host controls.
 - The copy overflows the stack. A ROP chain (return-oriented programming), built
   from instructions already in the signed image, takes over.
-- It writes `FEAT_OVR_PLM` to open the bank, then `SS0 = 0x88888888` and
-  `SS1 = 0x8`.
-- A PCI function-level reset (FLR) resets the card; the stock driver binds; the
-  override stays.
+- It writes [`FEAT_OVR_PLM`](../specs/03_register-map.md#write-gate) to open the
+  bank, then [`SS0`](../specs/03_register-map.md#ss0-and-ss1) = `0x88888888` and
+  [`SS1`](../specs/03_register-map.md#ss0-and-ss1) = `0x8`.
+- A [PCI function-level reset
+  (FLR)](../specs/02_privilege-and-rate-control.md#privilege-levels-and-the-plm)
+  resets the card; the stock driver binds; the override stays.
 
 ```
   signed SEC2 booter
@@ -141,10 +148,13 @@ Three things changed, and together they close the old route:
 
 That leaves PL3. A GSP-RM bug is not enough because GSP-RM runs at PL2; a host
 write is not enough because the host is PL0. The host-facing surfaces at PL3 are
-the FSP message parser, the FMC boot-parameter parser, and the suspend/resume page
-table. A bug in one of those is the remaining class.
+the [FSP message parser](../specs/01_boot-chain.md#fsp-command-surface), the [FMC
+boot-parameter parser](../specs/01_boot-chain.md#wprmeta), and the
+[suspend/resume page table](../specs/01_boot-chain.md#suspendresume). A bug in one
+of those is the remaining class.
 
-The vBIOS is not a shortcut either. Its plaintext init tables [do not name the
+The [vBIOS](../specs/05_vbios-and-devinit.md) is not a shortcut either. Its
+plaintext init tables [do not name the
 FEAT block](experiments/05_fmc-fsp-boot-inputs.md#0522-vbios-devinit-table-scan),
 and the tables that do exist are authenticated in Heavy Secure.
 
@@ -155,14 +165,14 @@ the experiment record with the commands and artifacts.
 
 | What I did | Result | Status | Records |
 |---|---|---|---|
-| Wrote the speed registers from the host window and from GSP firmware; tried the fuse shadow and the graphics engine's rate register | Success returned, writes dropped; the rate register is writable but reasserted and inert | Dead, measured | [register writes](experiments/01_software-register-writes.md) |
+| Wrote the speed registers from the host window and from GSP firmware; tried the [fuse shadow](../specs/03_register-map.md#fuse-and-otp) and the graphics engine's [rate register](../specs/02_privilege-and-rate-control.md#the-rm-getter-and-the-host-view) | Success returned, writes dropped; the rate register is writable but reasserted and inert | Dead, measured | [register writes](experiments/01_software-register-writes.md) |
 | Used the driver's registry knobs (`RMOverrideSmSpeedSelect*`, `RMDisableFeatureDisablement`) | Parsed and stored, no rate or bank change | Dead, measured | [registry keys](experiments/02_registry-and-static-audit.md) |
-| Poked the GPU command ring (FECS doorbell and graphics engine context buffers) | Payloads are addresses and sizes, no selector field | Dead, measured/static | [FECS and context](experiments/03_fecs-and-gr-context.md) |
-| Read firmware memory (GSP, FSP, and SEC2 local memory; RISC-V debug engine) | Local memory empty or locked to PL3; the debug engine reads the 14.4 MB GSP-RM code segment after a halt, not secure memory or the WPR | Dead or diagnostic | [secure memory](experiments/04_hs-sec2-fsp-memory.md) |
-| Fed the boot firmware bad input (the host-built boot descriptors) | Ten structured error codes, control over where firmware lands in VRAM, authentication enforced | Live input, no exploit | [boot inputs](experiments/05_fmc-fsp-boot-inputs.md) |
-| Hooked suspend/resume (the host-built descriptor and page table) | Page table is plaintext; saved state is encrypted per boot and card | Live structure, no exploit yet | [suspend/resume](experiments/06_sr-resume.md) |
-| Edited the vBIOS and its init tables, including the no-flash loader route | No FEAT address in plaintext, tables authenticated, custom route tops out at PL2 | Dead, static | [vBIOS](experiments/07_plaintext-corpus.md#073-the-vbios-has-no-feat-address), [devinit](experiments/05_fmc-fsp-boot-inputs.md#0522-vbios-devinit-table-scan) |
-| Raced the reset (the PL2-writable window after an FLR) | Window is 1.32 s; the re-lock lands 1.85 s before GSP-RM starts | Dead, measured | [reset window](experiments/01_software-register-writes.md#016-the-post-reset-window-closes-before-gsp-rm) |
+| Poked the GPU command ring ([FECS doorbell](../specs/03_register-map.md#fecs) and [graphics engine context buffers](../specs/03_register-map.md#sm-and-gr)) | Payloads are addresses and sizes, no selector field | Dead, measured/static | [FECS and context](experiments/03_fecs-and-gr-context.md) |
+| Read firmware memory (GSP, FSP, and SEC2 local memory; [RISC-V debug engine](../specs/06_gsp-riscv-and-priscv.md#priscv-register-map)) | Local memory empty or locked to PL3; the debug engine reads the 14.4 MB GSP-RM code segment after a halt, not secure memory or the WPR | Dead or diagnostic | [secure memory](experiments/04_hs-sec2-fsp-memory.md) |
+| Fed the boot firmware bad input (the host-built [boot descriptors](../specs/01_boot-chain.md#wprmeta)) | Ten structured error codes, control over where firmware lands in VRAM, authentication enforced | Live input, no exploit | [boot inputs](experiments/05_fmc-fsp-boot-inputs.md) |
+| Hooked suspend/resume (the host-built [descriptor and page table](../specs/01_boot-chain.md#suspendresume)) | Page table is plaintext; saved state is encrypted per boot and card | Live structure, no exploit yet | [suspend/resume](experiments/06_sr-resume.md) |
+| Edited the [vBIOS](../specs/05_vbios-and-devinit.md) and its [init tables](../specs/05_vbios-and-devinit.md#devinit-authentication), including the no-flash loader route | No FEAT address in plaintext, tables authenticated, custom route tops out at PL2 | Dead, static | [vBIOS](experiments/07_plaintext-corpus.md#073-the-vbios-has-no-feat-address), [devinit](experiments/05_fmc-fsp-boot-inputs.md#0522-vbios-devinit-table-scan) |
+| Raced the reset (the [PL2-writable window](../specs/02_privilege-and-rate-control.md#privilege-levels-and-the-plm) after an FLR) | Window is 1.32 s; the re-lock lands 1.85 s before GSP-RM starts | Dead, measured | [reset window](experiments/01_software-register-writes.md#016-the-post-reset-window-closes-before-gsp-rm) |
 
 [The FMC debug-key search](experiments/07_plaintext-corpus.md#0710-the-fmc-key-search-comes-back-negative)
 is negative too: three known-answer variants and both debug containers over all
@@ -177,14 +187,17 @@ The four surfaces I would probe next, in order:
 
 1. **[The suspend/resume page
    table](experiments/06_sr-resume.md#064-the-radix3-is-plaintext-and-fully-mapped).**
-   On resume, secure firmware walks a three-level table the host builds, before
-   it decrypts the saved state. A malformed entry is the last structural probe. A
+   On resume, secure firmware walks a [three-level
+   table](../specs/01_boot-chain.md#suspendresume) the host builds, before it
+   decrypts the saved state. A malformed entry is the last structural probe. A
    failed resume hangs with no host log, so this needs a network console or phase
    markers first.
 2. **[The FSP message
    framing](experiments/08_assessment-and-cross-checks.md#087-static-pass-over-feat-and-fsp).**
-   The host controls the transmit length, and the reply's task and command
-   identity is not checked. A malformed-length packet is the remaining test.
+   The host controls the [transmit
+   length](../specs/01_boot-chain.md#fsp-command-surface), and the reply's task
+   and command identity is not checked. A malformed-length packet is the
+   remaining test.
 3. **The two remaining boot-descriptor sizes.** `fbSize` and `nonWprHeapSize` are
    the layout fields I did not vary ([the `WprMeta` field
    matrix](experiments/05_fmc-fsp-boot-inputs.md#0511-wprmeta-magic-enforced-verified-accepted)).
@@ -213,15 +226,21 @@ why its memory read is gated, but it cannot read the image.
 
 Two different things are missing:
 
-- The missing measurement: a full-rate GB202's FEAT readout, `SS0`/`SS1`, and fuse
-  block. That tells me what to aim for.
+- The missing measurement: a full-rate GB202's [FEAT
+  readout](../specs/03_register-map.md#readout-decode),
+  [`SS0`/`SS1`](../specs/03_register-map.md#ss0-and-ss1), and [fuse
+  block](../specs/03_register-map.md#fuse-and-otp). That tells me what to aim for.
 - The missing primitive: code execution at PL3. That is how the selector gets
   written. A PRO 6000 dump does not unlock the card.
 
 **What would count as an unlock:**
 
-- The driver's rate getter reports the capped field clear.
-- BF16 issue rate near 440 TF/s, with a matched BF16 GEMM and numerical validation.
+- The driver's [rate
+  getter](../specs/02_privilege-and-rate-control.md#the-rm-getter-and-the-host-view)
+  reports the capped field clear.
+- [BF16 issue
+  rate](../specs/02_privilege-and-rate-control.md#the-cap-is-product-segmentation)
+  near 440 TF/s, with a matched BF16 GEMM and numerical validation.
 - The override survives an FLR, a driver reload, and a device enable. The driver
   loads without GPU or GSP errors.
 - It reproduces on a second cold boot and a second card.
