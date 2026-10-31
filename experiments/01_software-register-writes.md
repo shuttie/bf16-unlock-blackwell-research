@@ -725,6 +725,9 @@ attempt at `0x137200` with `0xbadf5128`
   - The [bank-wide gate](#013-the-whole-feat-bank-shares-one-gate) explains why
     the benign word drops.
   - The [PLM decode](#015-the-permission-mask-admits-pl3-writes-only) is the gate.
+  - The [debugger
+    group](../experiments/10_debugger-class-and-fecs-ucode.md) covers the class
+    exposure, the context and descriptor spaces, and the FECS bodies.
 - **Open question:** the op is still useful for read-only observation. Whether
   it exposes other engine blocks, or a write through a different debug
   subcommand, is untested.

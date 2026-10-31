@@ -27,6 +27,13 @@
   group](experiments/09_fmc-cold-boot-parsers.md) varied every host field and
   buffer byte the FMC consumes; the result is a bounded parser, and no
   authentication bypass appeared.
+- The CUDA debugger class is exposed and reads the FEAT bank, the GR context,
+  and the `0x137000` block; its FEAT write drops like the host and GSP paths
+  ([the debugger group](experiments/10_debugger-class-and-fecs-ucode.md)).
+- The vBIOS FECS/GPCCS bodies are extracted; the headers are plaintext and the
+  code is encrypted. The app/target-to-loader map and the FUC5 decode remain
+  ([the FECS
+  bodies](experiments/10_debugger-class-and-fecs-ucode.md#103-the-vbios-fecsgpccs-bodies)).
 - The remaining PL3 parsers are the [suspend/resume
   descriptor](#sr-descriptor-and-page-table) and the [FSP
   framing](#fsp-framing). The SR harness now has a relative radix3 address and
@@ -56,7 +63,7 @@ cost.
 | C15 | [Readout decode](#readout-decode) | What are the un-decoded readout bits? | offline | May change the target |
 | C03 | [vBIOS app 0x23](#vbios-app-0x23) | Is the plaintext data tail a devinit template? | offline decode | Only direct-unlock candidate |
 | C04 | [Override payload](#override-payload-format) | Does the SS0/SS1 override set full rate? | 1 PRO cold-boot series | Validates a writer, not a route |
-| C18 | [vBIOS ucode corpus](#vbios-ucode-corpus) | Can the FECS/GPCCS consumer be decoded? | weeks | Answers the rate semantics |
+| C18 | [vBIOS ucode corpus](#vbios-ucode-corpus) | Can the extracted FECS/GPCCS bodies be decoded? | weeks | Answers the rate semantics |
 
 ## Measured: the cold-boot parser map
 
@@ -322,18 +329,23 @@ activity leaves the PMU or a hardware latch in play.
 ## Per-SM channel
 
 **Where it comes from.** `GR_CTX`, `TPC`, `SM`, and `QUAD` return `0x1f` with
-every route ([the GR_CTX
+every subdevice route ([the GR_CTX
 probe](experiments/01_software-register-writes.md#017-per-context-registers-need-a-caller-owned-channel)).
 The host validation checks only the offset; the rejection comes from the GSP,
 so it is a caller-identity check, not proof the space is unreachable.
+The CUDA debugger class has the channel context the RM path lacked. Its
+`GR_CTX` reads the space; `TPC`/`SM`/`QUAD` still return `regStatus=2`, and the
+space has no FEAT-selector mirror. The only rate register is the inert
+`0x504204` ([the context
+record](experiments/10_debugger-class-and-fecs-ucode.md#102-the-context-and-descriptor-spaces-read)).
 
-**Try.** Issue the typed read with `hChannelTarget` set to a live channel owned
-by the calling client; then sweep `0x504xxx` read-only and compare with the FEAT
-decode.
+**Try.** The remaining piece is the typed read with `hChannelTarget` set to a
+live channel, and a per-SM offset under a valid group/subgroup mask. The
+`0x504xxx` sweep is done.
 
-**Decision.** A successful read makes the per-SM space live. A rejection with a
-real channel closes it. The minimum harness is a small RM client, so this costs
-more than its probability suggests.
+**Decision.** The space is readable; it is not a rate lever. A per-SM offset
+that changes with the selector would reopen it; the inert `0x504204` and the
+`0x504240` table do not.
 
 ## Readout decode
 
@@ -400,10 +412,17 @@ likely FECS/GPCCS (graphics front-end and context-switch microcode) consumer
 ([the microcode table](specs/05_vbios-and-devinit.md#microcode-table)). The FMC
 key search targeted the FMC and the SEC2 booter, not these
 ([the key search](experiments/07_plaintext-corpus.md#0710-the-fmc-key-search-comes-back-negative)).
+The four bodies are extracted. The 1 MiB flash is the linear image; the 2 MiB
+aperture is not. The two target-`0x01` bodies share a plaintext FUC header and
+differ at the likely code-size field; the target-`0x0E` body carries the PLM
+data
+([the FECS
+bodies](experiments/10_debugger-class-and-fecs-ucode.md#103-the-vbios-fecsgpccs-bodies)).
 
-**Try.** Map the app/target IDs to the loaders in the GSP-RM; check whether the
-bodies share the FMC key family; if they are Falcon FUC5, build a Falcon
-parcels oracle ([the FMC tools](tools/fmc-tools/)).
+**Try.** The bodies are extracted; map the app/target IDs to the loaders in the
+GSP-RM, check whether the bodies share the FMC key family, and if they are
+Falcon FUC5, build a Falcon parcels oracle
+([the FMC tools](tools/fmc-tools/)).
 
 **Decision.** A decoded consumer answers what the selector does and whether a
 command sets it. High effort, no hardware.
@@ -431,8 +450,13 @@ command sets it. High effort, no hardware.
   ([the debugger
   test](experiments/01_software-register-writes.md#018-the-debugger-class-reads-the-bank-but-cannot-write-it)).
 - The `0x137200` lead. It is a privilege-protected FECS/GR register
-  (`0xc120048a` in a `0x30`-stride table), not a FEAT word ([the debugger
-  test](experiments/01_software-register-writes.md#018-the-debugger-class-reads-the-bank-but-cannot-write-it)).
+  (`0xc120048a` in a `0x30`-byte entry pattern); the FECS log pairs it with
+  `0x14252215` and the refusal `0xbadf5128` ([the descriptor
+  record](experiments/10_debugger-class-and-fecs-ucode.md#102-the-context-and-descriptor-spaces-read)).
+- JTAG pads. Production parts gate them with secure-debug fuses and signed
+  unlock tokens; no public GeForce success exists. The retail card's class list
+  exposes the debugger class instead, and its FEAT write drops ([the debugger
+  group](experiments/10_debugger-class-and-fecs-ucode.md)).
 
 ---
 
