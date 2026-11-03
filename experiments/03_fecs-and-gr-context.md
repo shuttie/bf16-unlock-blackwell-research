@@ -32,12 +32,19 @@
   [`0x88888888`](../specs/02_privilege-and-rate-control.md#selector-encoding) is fill, not the Ada payload.
 - The two cards' images
   [differ in 618 words, none selector-shaped](#039-comparing-the-gr-context-across-both-cards).
+- The FECS command mailbox is a [host
+  surface](#0310-the-host-can-command-fecs-and-an-unknown-id-is-fatal): BAR0
+  writes to `0x409500`/`0x409504` execute a command, and the completion echo
+  lands at `0x409800`. The known `0x21` command does not move the bank or the
+  rate; an unassigned ID fatal-errors the FECS.
 
 **What it did not find.**
 
 - No rate selector or writable rate field in the
-  [FECS command surface](#032-the-fecs-command-protocol-statically) or the
-  [GR context image](#038-the-full-context-image-and-the-0x88888888-false-positive).
+  [known FECS command set](#032-the-fecs-command-protocol-statically) or the
+  [GR context image](#038-the-full-context-image-and-the-0x88888888-false-positive),
+  and no safe way to enumerate the encrypted handler: an unassigned ID is
+  [fatal](#0310-the-host-can-command-fecs-and-an-unknown-id-is-fatal).
 - No
   [host-built context image](#033-the-fecs-context-path-and-the-host-gr-structures)
   to inject a selector into.
@@ -57,6 +64,7 @@
 | 03.7 | [Global buffers and the file-dump transport](#037-global-buffers-and-the-switch-to-file-dumps) | File dumps fix transport |
 | 03.8 | [Full context image and the false positive](#038-the-full-context-image-and-the-0x88888888-false-positive) | No rate constant in image |
 | 03.9 | [Comparing the GR context across both cards](#039-comparing-the-gr-context-across-both-cards) | No card-dependent selector field |
+| 03.10 | [The host can command FECS, and an unknown ID is fatal](#0310-the-host-can-command-fecs-and-an-unknown-id-is-fatal) | Host commands; no rate; unknown ID fatal |
 
 ## 03.1 Live FECS, FSP, and SEC2 probes
 
@@ -725,3 +733,75 @@ byte-identical to the previous boot.
 - **Related:**
   - The [full image scan](#038-the-full-context-image-and-the-0x88888888-false-positive)
     establishes the constant counts on one card.
+
+## 03.10 The host can command FECS, and an unknown ID is fatal
+
+**Question.** Can the host issue a FECS command, and what does an unassigned ID
+do?
+
+**Why.**
+
+- Every prior doorbell write was GSP-mediated. [03.2](#032-the-fecs-command-protocol-statically)
+  mapped the command IDs statically but never pushed an attacker-chosen ID
+  through the mailbox.
+- A command that sets the rate would shortcut the [PL3
+  requirement](../specs/02_privilege-and-rate-control.md#the-selector-chain).
+- What it would give: a host command surface, a rate selector, or a robustness
+  finding.
+
+**Method.**
+
+- Tool: `session_a.sh` modes `regs`, `c12h`, and `c12i`; `regops` `wr` for the
+  PL2 path and `barw` for direct BAR0.
+- Target: `41:00.0`, root.
+- Steps: read the mailbox; write the data and ID from PL2 and from BAR0; read
+  the completion slot; vary the `0x21` feature mask; issue `0x7ff` with data `0`
+  and read the status and dmesg.
+- Args used:
+```bash
+sudo tools/driver-harness/session_a.sh regs
+sudo tools/driver-harness/session_a.sh c12h
+sudo ID=7ff DATA=0 tools/driver-harness/session_a.sh c12i
+```
+
+**Observed data.** Baseline: `0x409500 = 0`, `0x409504 = 0xbadf5545`,
+`0x409800 = 1`.
+
+- PL2 writes to `0x409500` land; writes to `0x409504` return `SUCCESS` and read
+  back the `0xbadf5545` sentinel.
+- After the first `0x409504 = 0x21`, `0x409800` reads `0x21`.
+- The clean host sequence, status cleared to `0`, data `0x3fffffff`, ID `0x21`
+  from BAR0, also leaves `0x409800 = 0x21`. Both PL2 and the host can execute
+  the command.
+- Masks `0x3fffffff`, `0x3ffffffe`, `0x3ffffffd`, and `0x2fffffff` leave the
+  FEAT bank unchanged. The probe measured BF16→FP32 at 226.24 Top/s before the
+  command sweep and 226.02 after; `f16_f32` was 226.95 and 226.97.
+- ID `0x7ff` with data `0` leaves `0x409800 = 0` and draws:
+
+```text
+NVRM: Xid (PCI:0000:41:00): 13, Graphics FECS Exception: UCODE Fatal Error
+NVRM: Xid (PCI:0000:41:00): 154, GPU recovery action changed from 0x0 (None) to 0x1 (GPU Reset Required)
+```
+
+**Result.**
+
+- **Answer:** the host can command FECS; the known `0x21` command executes but
+  is not a rate selector; an unassigned ID fatal-errors the ucode.
+- **What we learned:**
+  - The mailbox sits under the fully open `0x4096d0` PLM, so the host (PL0) and
+    GSP-RM (PL2) can both write it. The `0x409504` read is blocked.
+  - The completion slot echoes the command ID for a known command; the GSP-RM
+    later restores it to `1`.
+  - The handler has no safe default. An unknown ID kills the FECS, so the
+    encrypted command table cannot be enumerated by a blind sweep.
+  - The plaintext command map has no selector
+    ([03.2](#032-the-fecs-command-protocol-statically)).
+- **Related:**
+  - The [live mailbox probe](#031-live-fecs-fsp-and-sec2-probes) established the
+    baseline values.
+  - The [register map](../specs/03_register-map.md#fecs-command-mailbox) carries
+    the mailbox definition.
+- **Open question:** whether the encrypted handler holds a selector command, and
+  what the context-buffer loader (`0x30`–`0x32`, `0x75`, `0x76`) does with a
+  host-chosen address. The latter is a pointer-injection test and needs a
+  sacrificial card.

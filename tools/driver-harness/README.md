@@ -71,7 +71,7 @@ is the per-block privilege mask. The linked specs define each in full.
 | Boot inputs | `fmc_oracle.sh`, `wpr_oracle.sh`, `sig_oracle.sh`, `wpr_verified_patch_test.sh`, `run_gsp_patch_test.sh`, `bootbuf_dump.sh`, `boot_tamper_run.sh`, `fmc_buffer_probe.sh` |
 | FEAT / PLM | `feat_preboot.sh`, `feat_preboot_flr.sh`, `featbank_writer_probe.sh`, `plm_window_race.sh`, `regkey_rate_sweep.sh` |
 | Suspend/resume | `sr_resume_test.sh`, `sr_oracle.sh`, `sr_dump_test.sh` |
-| PRISCV ICD | `icd_cmd.c`, `icd_rdm.c`, `icd_dump.c`, `icd_halt_probe.c`, `icd_bootimg_probe.c`, plus `icd_*probe.sh`, `icd_scan.sh`, `icd_trace_run.sh`, `icd_halt_run.sh` |
+| PRISCV ICD | `icd_cmd.c`, `icd_rdm.c`, `icd_dump.c`, `icd_halt_probe.c`, `icd_bootimg_probe.c`, `c26_haltscan.c`, `c25_writeprobe.c`, plus `icd_*probe.sh`, `icd_scan.sh`, `icd_trace_run.sh`, `icd_halt_run.sh` |
 | Context | `dump_ctx.sh`, `parse_ctxdump.py`, `parse_ctxfiles.py`, `analyze_crosscard.py`, `cuda_ctx.c`, `gprobe_with_ctx.sh` |
 | Logs / FB | `gsp_log_capture.sh`, `console_debug.sh`, `netconsole.sh`, `fb_capture.sh`, `fb_peek.py`, `fbread_analyze.py`, `icd_trace_analyze.py` |
 | Patches | `bf16_ctxdump.patch`, `bf16_boot_instr.patch`, `bf16_fsp_eventfix.patch` |
@@ -187,6 +187,25 @@ A bad `SRMeta` field hangs the resume with no host log. The oracle writes
 directory; a hang leaves the first two and no post-resume marker. Use
 netconsole as well when a serial or network console is available.
 
+## Session A oracles
+
+The Session A scripts exercise the FECS command mailbox, the PL2 payload, and
+the post-FLR re-lock. They use the stock driver.
+
+| Script | What it does |
+|---|---|
+| `session_a.sh regs` | C17 and C12: PL2 payload restore, FECS command injection from PL2 and BAR0, issue-rate probes |
+| `session_a.sh c12h` | Clean host-only FECS command test: clear the status, load the mask, write the ID from BAR0 |
+| `session_a.sh c12i` | One host command ID with a status poll; `ID=` and `DATA=` select the command |
+| `session_a.sh flr` | Read-only BAR0 poll across an FLR: FEAT bank, fuse security words, FSP core, GSP state |
+| `session_a_poll.c` | The poller used by `flr` |
+| `session_a_analyze.py` | Summarizes a `flr` run |
+
+`c12i` with an unassigned ID fatal-errors the FECS (`Xid 13`) and needs a
+reboot. `flr` is read-only apart from the PCI FLR and can wedge the card. The
+results are in [the host command record](../../experiments/03_fecs-and-gr-context.md#0310-the-host-can-command-fecs-and-an-unknown-id-is-fatal)
+and [the re-lock record](../../experiments/01_software-register-writes.md#019-the-re-lock-moves-fuse_ss_plm-and-no-fsp-register).
+
 ## PRISCV ICD
 
 Build the C tools first:
@@ -197,6 +216,8 @@ gcc -O2 -o icd_rdm icd_rdm.c
 gcc -O2 -o icd_dump icd_dump.c
 gcc -O2 -o icd_halt_probe icd_halt_probe.c
 gcc -O2 -o icd_bootimg_probe icd_bootimg_probe.c
+gcc -O2 -o c26_haltscan c26_haltscan.c
+gcc -O2 -o c25_writeprobe c25_writeprobe.c
 ```
 
 Usage:
@@ -207,7 +228,17 @@ icd_rdm <bdf> <addr_hex> <size 1|2|4|8> [base_hex] [poll_ms]
 icd_dump <bdf> <addr_hex> <len_hex> <outfile>
 icd_halt_probe <bdf>
 icd_bootimg_probe <bdf> [dumpfile]
+c26_haltscan <bdf> <outdir> [dump_mb]      # halt + aperture grid + dumps
+c25_writeprobe <bdf> <scratch_addr_hex>    # write-opcode sweep, halted core
 ```
+
+`c26_haltscan` recognizes the halt signature `CPUCTL 0x2a0 → 0x380` (the
+older probe's bit-4 wait never matched and worked only by proceeding after a
+fixed delay). Its dumps run at ~234k reads/s; the readable window is the
+[RM code segment](../../specs/06_gsp-riscv-and-priscv.md#rdm-aperture-and-address-model)
+alone, and it leaves the core halted so `c25_writeprobe` can run in the same
+session before the reboot. The measured closure both tools produced is in
+[the aperture record](../../experiments/04_hs-sec2-fsp-memory.md#046-the-icd-aperture-is-the-code-segment).
 
 `icd_halt_probe` and `icd_bootimg_probe` issue
 [`STOP`](../../specs/06_gsp-riscv-and-priscv.md#icd-command-engine); the GSP

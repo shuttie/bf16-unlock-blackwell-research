@@ -265,8 +265,10 @@ encrypted app `0x23` code. "Who writes `SS0`/`SS1` at boot" cannot be separated
 further from plaintext, but the timing and privilege are fixed:
 
 - The writer is a GPU-side devinit action that runs while the reset PLM admits PL2
-  writes and then locks the bank. The PMU is the leading candidate; the
-  FSP/BootROM and a hardware re-latch are not excluded.
+  writes and then locks the bank. The PMU is the leading candidate. The [FLR
+  poll](../experiments/01_software-register-writes.md#019-the-re-lock-moves-fuse_ss_plm-and-no-fsp-register)
+  sees no FSP register activity at the re-lock, so the FSP is excluded on the
+  visible registers; a hardware re-latch remains.
 - The FMC, the host driver, and GSP-RM do not write the bank.
 - No plaintext table names the FEAT block. The only PLM values are in an
   authenticated microcode data section.

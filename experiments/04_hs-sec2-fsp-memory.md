@@ -17,8 +17,8 @@
 **What it found.**
 
 - GSP EMEM is real GSP-RM (PL2) storage but
-  [held zeros at runtime](#041-gsp-emem-is-real-but-empty); FMC plaintext never
-  appears there.
+  [held zeros in the steady-state samples](#041-gsp-emem-is-real-but-empty);
+  FMC plaintext did not appear there in those samples.
 - The FSP EMEM port [drops pointer writes](#042-fsp-emem-pointer-writes-are-dropped);
   only the firmware-selected word is readable.
 - The PRISCV block is [partitioned per master](#043-priscv-block-is-split-per-master),
@@ -27,25 +27,33 @@
 - During the boot window the ICD is
   [blocked through HS](#045-boot-window-icd-route-is-blocked); `RDM` (read
   memory) is refused and the FSP has no debug port.
+- After boot the ICD aperture is [exactly the code
+  segment](#046-the-icd-aperture-is-the-code-segment): reads cover
+  `0x01000000–0x01DCD000` and refuse the heap, the runtime range, and the
+  WPR, and no write opcode exists — the port is read-only.
 
 **What it did not find.**
 
-- No readable FMC plaintext in the [GSP EMEM](#041-gsp-emem-is-real-but-empty) or
-  the [FSP EMEM](#042-fsp-emem-pointer-writes-are-dropped).
+- No readable FMC plaintext in the steady-state [GSP
+  EMEM](#041-gsp-emem-is-real-but-empty) or [FSP
+  EMEM](#042-fsp-emem-pointer-writes-are-dropped) windows.
 - No way to [move the FSP EMEM pointer](#042-fsp-emem-pointer-writes-are-dropped).
 - No [ICD access through HS](#045-boot-window-icd-route-is-blocked), and no
   boot-image read.
 - No [FSP debug port](#045-boot-window-icd-route-is-blocked).
+- No ICD read outside the code segment and no write opcode at all
+  ([the aperture measurement](#046-the-icd-aperture-is-the-code-segment)).
 
 ## Experiments
 
 | ID | Experiment | Result |
 |---|---|---|
-| 04.1 | [GSP EMEM is real but empty](#041-gsp-emem-is-real-but-empty) | No plaintext at runtime |
+| 04.1 | [GSP EMEM is real but empty](#041-gsp-emem-is-real-but-empty) | No plaintext at steady state |
 | 04.2 | [FSP EMEM pointer writes are dropped](#042-fsp-emem-pointer-writes-are-dropped) | Pointer fixed; one word readable |
 | 04.3 | [PRISCV block is split per master](#043-priscv-block-is-split-per-master) | No debug module found |
 | 04.4 | [PRISCV ICD is a live debug port](#044-priscv-icd-is-a-live-debug-port) | Halted RM code readable |
 | 04.5 | [Boot-window ICD route is blocked](#045-boot-window-icd-route-is-blocked) | No boot-image read |
+| 04.6 | [The ICD aperture is the code segment](#046-the-icd-aperture-is-the-code-segment) | Read-only, code window only |
 
 ## 04.1 GSP EMEM is real but empty
 
@@ -119,8 +127,8 @@ The eight EMEM ports at [`0x110ac0`–`0x110afc`](../specs/06_gsp-riscv-and-pris
 **Result.**
 
 - **Answer:** EMEM is real PL2-reachable storage, but it held zeros at the sample
-  point. The FMC plaintext never appears there, and the RISC-V debug API is
-  compiled out.
+  point. The FMC plaintext did not appear there in that sample, and the RISC-V
+  debug API is compiled out.
 - **What we learned:**
   - The stream advances 4 B per read; all 2,048 words read zero.
   - The write discriminator passes 5/5: `0xdeadbeef` lands at `0x1ffc`, the
@@ -542,3 +550,73 @@ keystream. Its authentication is covered in
 - **Open question:** which GSP-RM init step enables `RDM` after boot; the
   plaintext image has no ICD-enable write, so the exact mechanism is not
   identified.
+
+## 04.6 The ICD aperture is the code segment
+
+**Question.** Does the halted-core ICD reach anything beyond the RM code
+segment, and does any write opcode exist?
+
+**Why.**
+
+- The staged-ucode capture lead needed a read into RM heap memory; the ICD
+  was the only port that had ever read past the host windows, but nothing
+  had probed outside the code segment
+  ([the transit question](13_fwimage-map-and-bindata.md#136-the-decrypted-ucode-transit-and-its-read-route)).
+- The write closure rested on the driver header's opcode list, not on
+  hardware ([ICD write opcodes](../IDEAS.md#icd-write-opcodes)); one
+  landed write would be a code-modification primitive at PL2.
+- What it would give: a heap read for the capture lead, or a code write —
+  either one changes the plan.
+
+**Method.**
+
+- Tools: `c26_haltscan` and `c25_writeprobe`
+  ([driver harness](../tools/driver-harness/)) — a STOP, a calibration
+  grid, a 384-point runtime grid at 1 MiB steps, spin-poll `RDM` dumps,
+  and an opcode sweep against a zero span; stock driver, root, `41:00.0`.
+- Steps: halt the core, read the calibration and boundary addresses, sweep
+  the runtime range `0x90000000–0xA8000000`, dump the readable window and
+  compare it with the extracted image byte-for-byte, then try 24 write
+  opcodes against a zero span inside the window with readback.
+
+**Observed data.**
+
+- The halt signature is `CPUCTL 0x2a0 → 0x380`; the earlier probe's bit-4
+  check never matched and only worked because it proceeded after a fixed
+  wait.
+- Reads succeed exactly over `0x01000000–0x01DCD000` and refuse everywhere
+  else: the container base `0x00E71000`, the container's own bindata at
+  `0x02039000+`, the data segment `0x04000000`, the TLS, the log metadata,
+  all 384 runtime-grid points (`0x90000000–0xA8000000`, which includes the
+  halted stack pointer's `0xA3003ED0` page), and every WPR address.
+- A refused read leaves `RDATA` latched at the last successful value; the
+  stale word, not a sentinel, is what a refused read returns.
+- The 14.4 MB dump over the whole window matches the extracted image with
+  zero byte mismatches, at 234k reads per second.
+- Write sweep: the twenty unassigned opcodes around the known set all
+  return `ERROR[14]` and change nothing. Four candidates (`0x2a`, `0x4a`,
+  `0x8a`, `0xca`) complete — but their low five bits are `0x0a`, so they
+  are `RDM` with mangled size bits, and the readback stays zero.
+
+**Result.**
+
+- **Answer:** the ICD is a read-only port over the code segment alone. The
+  aperture is the ELF's first load segment and nothing else; there is no
+  write opcode in the probed space.
+- **What we learned:**
+  - The staged-ucode capture through the ICD is closed: the staging buffer
+    lives in heap or WPR memory, both outside the aperture
+    ([the transit record](13_fwimage-map-and-bindata.md#136-the-decrypted-ucode-transit-and-its-read-route)).
+  - The driver header's read-and-control-only opcode list is confirmed on
+    hardware; the code-modification foothold does not exist at this port.
+  - The halted-core code dump equals the file image, so the running RM code
+    is unpatched — any future code-level claim has a byte-exact baseline.
+- **Related:**
+  - [The live ICD test](#044-priscv-icd-is-a-live-debug-port) is the
+    post-boot baseline this extends.
+  - [The boot-window block](#045-boot-window-icd-route-is-blocked) shows
+    the same port refuses during HS.
+  - [ICD write opcodes](../IDEAS.md#icd-write-opcodes) is the closed lead
+    entry.
+- **Open question:** what enables `RDM` after boot remains unidentified;
+  the aperture itself is now bounded from both ends.

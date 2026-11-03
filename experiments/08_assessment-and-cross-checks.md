@@ -47,9 +47,11 @@
 
 **What it did not find.**
 
-- No same-card cold-boot series of the PRO 6000's [`SS0`/`SS1`](../specs/03_register-map.md#ss0-and-ss1),
-  so the override payload format is still open; the second card shows the words
-  differ across cards ([the reference dump](#0810-an-rtx-pro-6000-reference-dump)).
+- No same-card cold-boot series of the PRO 6000's [`SS0`/`SS1`](../specs/03_register-map.md#ss0-and-ss1);
+  the second card shows the words differ across cards ([the reference
+  dump](#0810-an-rtx-pro-6000-reference-dump)). The payload format itself is
+  measured on the prior art ([the two override
+  paths](../specs/02_privilege-and-rate-control.md#the-two-override-paths)).
 - No reachable `SS0`/`SS1` writer from PL0 or PL2
   ([the static pass](#087-static-pass-over-feat-and-fsp)).
 - No GSP log text or severity, because the metadata ELF is missing
@@ -386,7 +388,7 @@ Fuse values and the full-rate reference:
 | `FUSE_SS_IMLA1` | **0** | 0 | **3** |
 | all other `FUSE_SS_*` | **0** | 0 | 0 |
 
-The override-enable fuses separate the consumer and datacenter parts:
+The override-related fuses separate the consumer and datacenter parts:
 
 | Fuse | A100 / 170HX | Consumer Ampere | GB202 5090 (measured) | PRO 6000 (measured) |
 |---|---:|---:|---:|---:|
@@ -397,14 +399,24 @@ The override-enable fuses separate the consumer and datacenter parts:
 
 The GB202 columns are measured — the PRO 6000 words from [the reference
 dump](#0810-an-rtx-pro-6000-reference-dump), the 5090 words from [the
-debugger group](10_debugger-class-and-fecs-ucode.md#102-the-context-and-descriptor-spaces-read)
-— and both classes read the A100/170HX pattern on `FUSE_EN_SW_OVERRIDE`, not
-consumer Ampere's `1`: the software-override path is not fuse-enabled on this
-generation.
+debugger group](10_debugger-class-and-fecs-ucode.md#102-the-context-and-descriptor-spaces-read).
+The `FUSE_EN_SW_OVERRIDE` column does not decide the selector question: it
+gates the CTRL_OPT floorsweep override, not `SS0`/`SS1` ([the two override
+paths](../specs/02_privilege-and-rate-control.md#the-two-override-paths)). The
+deciding fuse is `FUSE_FEAT_OVR_DIS = 0`, which leaves the selector override
+available and puts the PLM alone in front of it.
 
-The survey reads the override path as architecturally available but requiring
-Falcon HS, and calls the host-level register-write route dead for compute unlock
-([the external cross-check](#0811-the-register-route-is-a-pl3-problem)).
+The survey calls the host-level register-write route dead for compute unlock
+and reads the override path as architecturally available but requiring Falcon
+HS ([the external cross-check](#0811-the-register-route-is-a-pl3-problem)).
+The prior art confirms the second half: the 170HX reads
+`FUSE_EN_SW_OVERRIDE = 0` and reaches full compute once HS code opens
+`FEAT_OVR_PLM` and the host writes `SS0`/`SS1` ([the Ampere fuse
+survey](https://gist.github.com/nvlight/813a866dc69d417497a427f4208321ff),
+[the CMP 170HX unlock](https://cmp.wiki/wiki/Driver_unlock)). The RTX 4090
+report measures the same sequence: the OTP fuses stay unchanged and the
+effective readout goes to zero ([the RTX 4090 register
+report](https://github.com/JustAResearcher/gpu-unlock-ada/blob/main/rtx4090-register-report.md)).
 
 The CMP 170HX is the prior-art part and the extreme case: all nine speed-select
 fuses read `0x5`, `FEAT_READOUT_1` reads `0x016db6ed`, its `SS0`/`SS1` read
@@ -431,8 +443,11 @@ was built for.
     per-card bit-8 difference is binning, not a rate selector.
   - The readout is a fuse mirror across generations, and the A100 confirms the
     all-zero target. The PRO 6000 confirms it on Blackwell
-    ([the reference dump](#0810-an-rtx-pro-6000-reference-dump)); the override
-    payload format is still unvalidated.
+    ([the reference dump](#0810-an-rtx-pro-6000-reference-dump)). The selector
+    override format is measured on the 170HX and RTX 4090
+    ([the two override
+    paths](../specs/02_privilege-and-rate-control.md#the-two-override-paths));
+    only the local PL3 write is unrun.
   - The GB203M dump ([`SS0`](../specs/03_register-map.md#ss0-and-ss1) `0x02000000`, then `0x12000000`; bit 28 moved between
     boots) confirms `SS0`/`SS1` are runtime state, not per-part fuses. The FECS
     copies at [`0x409664/68`](../specs/03_register-map.md#fecs) were [`0xbadf5040`](../specs/03_register-map.md#bad-read-sentinels) on Ada too, so their GB202 sentinel
@@ -878,15 +893,16 @@ different runtime and per-card words:
 | `FEAT_OVR_SM_SS1` | `0x00075005` | `0x00000001` |
 | `0x8238b0` ID | `0x1c5f331f` | `0x0db4b1c3` |
 
-The override-enable fuses read the same on both cards:
+The cross-part fuses read the same on both cards:
 [`FUSE_EN_SW_OVERRIDE`](../specs/03_register-map.md#fuse-and-otp) (`0x820040`)
 = 0, `FUSE_DIS_SW_OVR` (`0x820084`) = 1, `SECURE_FEAT_OVR_QUADRO_WR_SEC`
 (`0x82038c`) = 2, and `FUSE_FEAT_OVR_DIS` (`0x8203f0`) = 0, stable across the
-three reads. The full-rate card reads the A100/170HX pattern on
-`FUSE_EN_SW_OVERRIDE`, not the consumer-Ampere `1`: the software-override path
-is not fuse-enabled on the PRO 6000, which agrees with its every-enable-bit-clear
-[`SS0`/`SS1`](../specs/03_register-map.md#ss0-and-ss1). The 5090 reads the
-same words ([the debugger
+three reads. `FUSE_EN_SW_OVERRIDE = 0` gates the CTRL_OPT floorsweep override,
+not the selectors ([the two override
+paths](../specs/02_privilege-and-rate-control.md#the-two-override-paths)); the
+every-enable-bit-clear [`SS0`/`SS1`](../specs/03_register-map.md#ss0-and-ss1)
+say the fused selectors are in force, which is the full-rate state. The 5090
+reads the same words ([the debugger
 group](10_debugger-class-and-fecs-ucode.md#102-the-context-and-descriptor-spaces-read)).
 
 The same-card control is the decisive line: on card A the FP16 → FP16 and
@@ -926,9 +942,9 @@ is 1.97× its FP16 → FP32 number.
     bank and the cross-part tables.
 - **Open question:** a same-card cold boot would show whether `SS0`/`SS1` move
   the way the 5090's do; the two cards already show cross-card differences. The
-  override payload format still needs a PL3 write or an authoritative header —
-  and with `FUSE_EN_SW_OVERRIDE` reading `0` on both product classes, the
-  payload question is now bounded by a fuse gate, not just the PLM.
+  payload's gate is the PLM, not `FUSE_EN_SW_OVERRIDE` ([the two override
+  paths](../specs/02_privilege-and-rate-control.md#the-two-override-paths)); a
+  write that passes the PLM is still unrun on GB202.
 
 ## 08.11 The register route is a PL3 problem
 
@@ -1005,27 +1021,36 @@ Public probes and the prior-art projects show the same wall:
   bootloader-stage attempts, and that an edited fuse stops the card from posting
   ([write-up](https://ai.rs/ai-developer/rtx-5090-tensor-core-unlock-blackwell)).
 
-The override-enable fuses are the remaining local gap. On Ampere, the cross-part
-survey reads `FUSE_EN_SW_OVERRIDE` (`0x00820040`) as `1` on consumer parts and
-`0` on A100/170HX, `FUSE_DIS_SW_OVR` (`0x00820084`) as `1` on all, and
-`FUSE_FEAT_OVR_DIS` (`0x008203f0`) as `0` on all. It concludes that the override
-path is architecturally available but "needs Falcon HS." The 5090 and PRO 6000
-runs did not read those words.
+The override-enable fuses are the fuse-level input that decides between the
+two paths. On Ampere, the
+cross-part survey reads `FUSE_EN_SW_OVERRIDE` (`0x00820040`) as `1` on consumer
+parts and `0` on A100/170HX, `FUSE_DIS_SW_OVR` (`0x00820084`) as `1` on all,
+and `FUSE_FEAT_OVR_DIS` (`0x008203f0`) as `0` on all. It concludes that the
+override path is architecturally available but "needs Falcon HS." The 5090 and
+PRO 6000 runs read the same words; `FUSE_EN_SW_OVERRIDE = 0` there gates the
+CTRL_OPT floorsweep override, not the selectors ([the two override
+paths](../specs/02_privilege-and-rate-control.md#the-two-override-paths)).
 
-The target is also not settled. The PRO 6000's full rate is all-zero fuses with
-every `SS0`/`SS1` enable bit clear
-([the reference dump](#0810-an-rtx-pro-6000-reference-dump)), so full rate comes
-from the absence of a fuse penalty rather than an active override. `fmla32=3`
-comes with a ~2× penalty, not the public enum's 1/8, and the community's naive
-`FEAT_READOUT_1` decode produces out-of-range values. `SS0=0x88888888` and
-`SS1=0x8` are inherited from Ada and unvalidated on GB202.
+The target is validated by prior art but unmeasured on Blackwell. The PRO
+6000's full rate is all-zero fuses with every `SS0`/`SS1` enable bit clear
+([the reference dump](#0810-an-rtx-pro-6000-reference-dump)), so its full rate
+comes from the absence of a fuse penalty rather than an active override. A
+throttled part reaches full rate by the other route: PL3 code opens the PLM,
+then the host writes `SS0`/`SS1`, measured on the 170HX and RTX 4090 ([the two
+override
+paths](../specs/02_privilege-and-rate-control.md#the-two-override-paths)).
+`fmla32=3` comes with a ~2× penalty, not the public enum's 1/8, and the
+community's naive `FEAT_READOUT_1` decode produces out-of-range values.
+`SS0=0x88888888` and `SS1=0x8` are inherited from Ada and unmeasured on GB202.
 
 **Result.**
 
 - **Answer:** the negative result is structural. The older unlocks are PL3
   code-execution exploits, and Blackwell replaced the component that carried the
   exploit with the FSP/FMC chain. The missing primitive is code execution in a
-  signed PL3 image.
+  signed PL3 image; the prior art needs it for one write to `FEAT_OVR_PLM`, then
+  writes the selectors from the host
+  ([the two override paths](../specs/02_privilege-and-rate-control.md#the-two-override-paths)).
 - **What we learned:**
   - The FEAT write drop is reproduced on two Blackwell parts before any driver
     binds, so the host stack is not involved.
@@ -1036,8 +1061,8 @@ comes with a ~2× penalty, not the public enum's 1/8, and the community's naive
     GB20x, and the FMC is signed, encrypted, and authenticated; the local 16!
     key search is negative
     ([the key search](../experiments/07_plaintext-corpus.md#0710-the-fmc-key-search-comes-back-negative)).
-  - Two local gaps remain: the override-enable fuses are unread on GB202, and
-    the Blackwell selector payload and readout law are unproven.
+  - One local gap remains: a write that passes the FEAT PLM is unrun on GB202,
+    and the Blackwell readout law is unproven.
 - **Related:**
   - The [GSP write
     drop](../experiments/01_software-register-writes.md#012-speed-register-write-from-gsp-is-dropped),
@@ -1054,5 +1079,7 @@ comes with a ~2× penalty, not the public enum's 1/8, and the community's naive
   - The [FMC key
     search](../experiments/07_plaintext-corpus.md#0710-the-fmc-key-search-comes-back-negative)
     closes the debug-key route.
-- **Open question:** whether a PL3 write would change the Blackwell rate at all,
-  and whether the override path is enabled at the fuse level on this part.
+- **Open question:** whether a PL3 write would change the Blackwell rate at all.
+  The override path is enabled at the fuse level, so the gate is the PLM
+  ([the two override
+  paths](../specs/02_privilege-and-rate-control.md#the-two-override-paths)).

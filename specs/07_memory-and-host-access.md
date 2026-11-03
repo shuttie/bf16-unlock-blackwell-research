@@ -26,7 +26,7 @@
 - The non-WPR heap is readable, but the live resource-manager (RM) objects are
   in the WPR heap.
 - The GSP, FSP, and SEC2 EMEM windows are small and mostly empty or blocked.
-  None exposes Heavy Secure (HS) data at PL2 (Light Secure).
+  None exposed Heavy Secure (HS) data in the steady-state samples.
 - Two reads can wedge the GPU: a BAR0 page scan of `0x300000`–`0x400000`, and
   BAR1 framebuffer reads.
 

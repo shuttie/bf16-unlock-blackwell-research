@@ -17,38 +17,61 @@
   main firmware on the GPU's RISC-V coprocessor, PL2) writes drop, the bank's
   write mask admits PL3 (boot firmware) only, and the pre-lock writer runs
   before the host.
+- The FECS command mailbox is a host (PL0) surface. BAR0 writes to `0x409500`
+  and `0x409504` execute a command, and the completion echo lands at
+  `0x409800`; the known `0x21` command does not move the bank or the rate, and
+  an unassigned ID fatal-errors the FECS, so the encrypted command table cannot
+  be swept ([the host command
+  record](experiments/03_fecs-and-gr-context.md#0310-the-host-can-command-fecs-and-an-unknown-id-is-fatal)).
+- The exact override payload is dropped from PL2, and the rate does not move
+  ([the payload
+  test](experiments/01_software-register-writes.md#0110-the-exact-override-payload-is-dropped-from-pl2)).
+- The FLR re-lock at 1353 ms moves only `FUSE_SS_PLM` and no FSP register; the
+  PMU or a hardware latch remains ([the re-lock
+  record](experiments/01_software-register-writes.md#019-the-re-lock-moves-fuse_ss_plm-and-no-fsp-register)).
 - The public record reproduces the drop on GB202 and GB203M before the driver
   binds and places the missing primitive at PL3 code execution in the security
   firmware ([the external
   cross-check](experiments/08_assessment-and-cross-checks.md#0811-the-register-route-is-a-pl3-problem)).
 - The full-rate readout is measured: two RTX PRO 6000s read
-  `FEAT_READOUT_1 = 0` with every arithmetic speed fuse at 0. The
-  override-enable fuses are measured on both product classes — two 5090s, two
-  PRO 6000s — and every card reads `FUSE_EN_SW_OVERRIDE = 0`, so the
-  software-override path is fused off on this generation and the unlock target
-  is the fuse words, not a live override ([the debugger
+  `FEAT_READOUT_1 = 0` with every arithmetic speed fuse at 0. The target is
+  the live `SS0`/`SS1` override, not the fuse words: `FUSE_FEAT_OVR_DIS`
+  reads 0 on every measured card, and the CMP 170HX reaches full rate with
+  `FUSE_EN_SW_OVERRIDE` also at 0 ([the two override
+  paths](specs/02_privilege-and-rate-control.md#the-two-override-paths),
+  [the debugger
   group](experiments/10_debugger-class-and-fecs-ucode.md#102-the-context-and-descriptor-spaces-read),
   [the reference
   dump](experiments/08_assessment-and-cross-checks.md#0810-an-rtx-pro-6000-reference-dump)).
 - The cold-boot parser map is measured. The [FMC parser
-  group](experiments/09_fmc-cold-boot-parsers.md) varied every host field and
-  buffer byte the FMC consumes; the result is a bounded parser, and no
-  authentication bypass appeared.
+  group](experiments/09_fmc-cold-boot-parsers.md) varied every field it
+  reached; the result is bounded on those paths, and no authentication bypass
+  appeared. The unrun paths are in [the parser map](#measured-the-cold-boot-parser-map).
 - The CUDA debugger class is exposed and reads the FEAT bank, the GR context,
   and the `0x137000` block; its FEAT write drops like the host and GSP paths
-  ([the debugger group](experiments/10_debugger-class-and-fecs-ucode.md)).
+  through the register-op command. The class's other commands, including the
+  memory reads and SM error-state dumps, were never issued ([the debugger
+  group](experiments/10_debugger-class-and-fecs-ucode.md), [the command
+  census](#debugger-class-command-census)).
 - The readout decode is closed: every RM consumer of `FEAT_READOUT_0` and
   `FEAT_READOUT_2` is an ECC capability flag, clear on all four measured
   cards, so `READOUT_1` is the only selector carrier
   ([the readout decode](experiments/12_feat-readout-decode.md)).
 - The fwimage is a libos container: about 18.5 MB of plaintext and a 53.8 MB
   encrypted `rm.bindata.bin` that holds the engine ucode behind per-blob
-  SEC2 key derivation. The decrypted FECS/GPCCS ucode transits RM memory at
-  boot, so a timed capture reads it without the key
-  ([the fwimage map](experiments/13_fwimage-map-and-bindata.md)).
+  SEC2 key derivation. The blob census names two `0xf900` code-load blobs as
+  the GR-falcon shape, and the timed-capture lead through the ICD is closed:
+  the `sec2_acr` args are a timeout pair, and the ICD reads the code segment
+  only ([the fwimage map](experiments/13_fwimage-map-and-bindata.md),
+  [the aperture](experiments/04_hs-sec2-fsp-memory.md#046-the-icd-aperture-is-the-code-segment)).
+  The EMEM and DMEM ports were sampled only at steady state, so [the timed
+  port capture](#timed-emem-and-dmem-capture) is still unrun.
 - The FECS, GPCCS, and PMU falcon bases return decode or not-implemented
-  markers, and the GR window the GSP-RM admits is empty. The host has no FECS
-  code or state window ([the falcon probe](experiments/11_falcon-and-gr-window-probe.md)).
+  markers at the documented bases, and the GR window the GSP-RM admits is
+  empty. The host has no FECS code or state window there; the PMU base is
+  unknown, so [the engine map is
+  incomplete](#engine-map-completion) ([the falcon
+  probe](experiments/11_falcon-and-gr-window-probe.md)).
 - The space above that window is decode refusals plus the vBIOS ROM at
   `0x300000`–`0x4fffff` and one per-card table at `0x1f2000`–`0x1f3fff`. Neither
   is GR ucode ([the GR
@@ -68,31 +91,56 @@
 
 ## The index
 
-Rows are ordered by the decision each one buys. The staged-ucode capture sits
-first because it settles the fork everything else depends on; the rest are
-ordered by whether the lead can produce the PL3 primitive, not by cost.
+Rows are ordered by the decision each one buys. Session A measured the FECS
+doorbell, the below-PLM read, the writer name, and the PL2 payload; they are in
+[Measured in Session A](#measured-in-session-a) and out of the open ranking.
+The first open row is now C01: the FECS command set has no selector and the
+unknown-ID path is fatal, so the SR page table is the cheapest remaining path
+to the PL3 primitive. The rest are ordered by whether the lead can produce the
+PL3 primitive, not by cost.
 
 | ID | Lead | What it tests | Cost | Decision value |
 |---|---|---|---|---|
-| C26 | [Staged-ucode capture](#staged-ucode-capture) | Can the decrypted FECS/GPCCS ucode be read out of RM memory at boot? | 1–2 days | Settles whether any PL3 plan can work |
 | C01 | [SR descriptor and page table](#sr-descriptor-and-page-table) | Can a malformed resume descriptor or PTE steer the parser? | 1–2 days | PL3 code execution |
 | C02 | [Carveout layout fields](#carveout-layout-fields) | Do the ACR and `wprCarveout*` fields move the protected layout? | 1 day | Layout lever |
 | C20 | [Boot-input race](#boot-input-race) | Is there a hash-to-use window? | 1–2 days | PL2 or PL3 code execution |
 | C13 | [FSP framing](#fsp-framing) | Is the ROM's message parser weak at the framing layer? | 2–3 days | PL3 parser surface |
 | C11 | [Context patch buffer](#context-patch-buffer) | Can the host edit a GSP-consumed pointer list? | 1 day | PL2 write primitive |
 | C19 | [SR saved-state malleability](#sr-saved-state-malleability) | Is the saved ciphertext malleable? | 1 day | PL2 foothold |
-| C05 | [Below-PLM lock](#below-plm-lock) | Does a PL3 write even suffice? | 1 hour | Prerequisite for any PL3 plan |
-| C12 | [Host FECS doorbell](#host-fecs-doorbell) | Can the host command FECS? | 1 hour | PL0 consumer interface |
-| C17 | [Ada payload from PL2](#ada-payload-from-pl2) | Does the exact payload take a different gate? | minutes | Completes the record |
-| C06 | [Name the writer](#name-the-writer) | Is the re-lock FSP or PMU? | 1 hour | Names the pre-lock actor |
 | C10 | [Per-SM channel](#per-sm-channel) | Is per-SM reachable with a real channel? | 1–2 days | Last non-PL3 register space |
 | C03 | [vBIOS app 0x23](#vbios-app-0x23) | Is the plaintext data tail a devinit template? | offline decode | Only direct-unlock candidate |
 | C04 | [Override payload](#override-payload-format) | Does the SS0/SS1 override set full rate? | 1 PRO cold-boot series | Validates a writer, not a route |
 | C22 | [vBIOS ucode key search](#vbios-ucode-key-search) | Do the encrypted devinit bodies decrypt under the FMC key family? | offline, days | May name the FEAT writer |
 | C23 | [Computed-offset sweep and devinit handlers](#computed-offset-sweep-and-devinit-handlers) | Do computed-offset references to the rate registers exist in the plaintext GSP-RM? | offline, days | Closes the no-RM-writer claim |
 | C24 | [Boot-args buffer](#boot-args-buffer) | Is the fourth host-built boot structure parsed with checks? | 1–2 days | Live input, mapped or not |
-| C25 | [ICD write opcodes](#icd-write-opcodes) | Does the halted-core debug port accept a write opcode? | 1 hour | PL2 code-modification foothold |
 | C18 | [vBIOS ucode corpus](#vbios-ucode-corpus) | Which stack consumes the vBIOS bodies? | days | Low, closed here |
+
+The Session A measurements are closed out here; the evidence is in the
+experiment records.
+
+### Measured in Session A
+
+| ID | Lead | Outcome | Record |
+|---|---|---|---|
+| C12 | [Host FECS doorbell](#host-fecs-doorbell) | PL0 command surface; `0x21` executes but does not move the rate; an unassigned ID fatal-errors the FECS | [03.10](experiments/03_fecs-and-gr-context.md#0310-the-host-can-command-fecs-and-an-unknown-id-is-fatal) |
+| C05 | [Below-PLM lock](#below-plm-lock) | Re-lock at 1353 ms; only `FUSE_SS_PLM` moves; no second gate | [01.9](experiments/01_software-register-writes.md#019-the-re-lock-moves-fuse_ss_plm-and-no-fsp-register) |
+| C06 | [Name the writer](#name-the-writer) | No FSP register activity; PMU or hardware latch remains | [01.9](experiments/01_software-register-writes.md#019-the-re-lock-moves-fuse_ss_plm-and-no-fsp-register) |
+| C17 | [Ada payload from PL2](#ada-payload-from-pl2) | Dropped; rate unchanged | [01.10](experiments/01_software-register-writes.md#0110-the-exact-override-payload-is-dropped-from-pl2) |
+
+The index above buys decisions about the unlock. The leads below buy
+information: each is a measurement program whose output can generate new
+hypotheses. They are ranked by information per cost, not by the unlock
+decision.
+
+| ID | Lead | What it would reveal | Cost |
+|---|---|---|---|
+| C27 | [Debugger-class command census](#debugger-class-command-census) | A memory or state read path through the exposed debug class | 1 day |
+| C28 | [Timed EMEM and DMEM capture](#timed-emem-and-dmem-capture) | FMC or SEC2 plaintext during the boot window | 1–2 days |
+| C29 | [Engine-map completion](#engine-map-completion) | The PMU falcon and the unknown blocks; the FEAT writer | 1 day |
+| C30 | [RM interface and log census](#rm-interface-and-log-census) | Unexposed control handlers, falcon accessors, and the FWSEC→SEC2 path | offline, days |
+| C31 | [Cross-version corpus diff](#cross-version-corpus-diff) | Which parsers and checks NVIDIA changed, and where older bugs live | offline, days |
+| C32 | [Crypto-model and key-source program](#crypto-model-and-key-source-program) | Whether the FMC and bindata keys are image-wide, and what the cipher is | offline, days |
+| C33 | [PL2 read oracle](#pl2-read-oracle) | Decrypted FECS/GPCCS ucode and WPR contents through an RM primitive | weeks |
 
 ## Measured: the cold-boot parser map
 
@@ -140,19 +188,20 @@ The descriptor carries `sysmemAddrOfSuspendResumeData` and
 `sizeOfSuspendResumeData`, and the radix3 page table is plaintext and fully
 mapped ([the
 radix3](experiments/06_sr-resume.md#064-the-radix3-is-plaintext-and-fully-mapped)).
-Only the magic was varied; a wrong value hangs the resume
-([the bad-magic
+The magic and the revision were varied; both reject non-stock values and hang
+the resume ([the bad-magic
 test](experiments/06_sr-resume.md#062-a-bad-srmeta-magic-hangs-the-resume)).
-The size, the pointer, the flags, and the PTE values are host-controlled and
-untested.
+The size, the pointer, the flags, the radix3 delta, and the PTE values are
+host-controlled and untested.
 
 **Try.** The [driver harness](tools/driver-harness/) now has field 6 (radix3
 address plus a delta) and disk phase markers (`phase_loaded`,
 `phase_pre_suspend`, `phase_post_resume`). A failed resume leaves the
 pre-suspend marker and no post-resume marker. Run the stock control first, then
-`revision` (0, 1, 3), `flags` (1, 2), `sizeOfSuspendResumeData` (stock, half,
-16 MiB), and radix3 deltas. Then a PTE that points at a duplicate page, a PTE
-that crosses a 4 MiB run boundary, and an unmapped entry.
+`flags` (1, 2), `sizeOfSuspendResumeData` (stock, half, 16 MiB), and radix3
+deltas. The PTE tests need a new hook: `sr_oracle.sh` varies only the scalar
+fields. Then a PTE that points at a duplicate page, a PTE that crosses a 4 MiB
+run boundary, and an unmapped entry.
 
 **Decision.** A resume that completes with a changed size or pointer, or a new
 hang point, is a parser surface. Heavy Secure validating the PTEs before walking
@@ -198,7 +247,9 @@ than `0x33`. Then swap a plaintext GSP-RM image between stock and patched copies
 during boot. Then alternate the `WprMeta` bootloader and radix3 pointers between
 two valid copies.
 
-**Decision.** A patched plaintext GSP-RM that boots is PL2 code execution. A
+**Decision.** A patched plaintext GSP-RM that boots is PL2 code execution. It
+is also the read oracle in [the PL2 read oracle](#pl2-read-oracle); treat a
+success as an information primitive even before it helps the FEAT write. A
 modified FMC image that boots runs at PL3 and can write the FEAT gate. A uniform
 `0x33` or `0xaff` closes the race. Use [the driver
 harness](tools/driver-harness/) and expect reboots.
@@ -294,14 +345,18 @@ The public record places the older unlock at HS code execution, which is the
 only level the mask admits ([the external
 cross-check](experiments/08_assessment-and-cross-checks.md#0811-the-register-route-is-a-pl3-problem)).
 
-**Try.** Read and write the fuse security words `0x82038c`, `0x8203f0`,
-`0x8200d0`–`0x8200fc`, `0x820040`, and `0x820084`; read the FEAT words across
-the FLR (function-level reset) window.
+**Measured.** Across an FLR the FEAT PLM re-locks at 1353 ms, 1821 ms before
+the first GSP-RM program counter at 3174 ms. Only one fuse security word moves:
+`FUSE_SS_PLM` (`0x8200fc`) takes the FLR's `0x80842bcf`, the same value as the
+FEAT PLM, and re-locks to `0xfffffbff` at the same instant; the FEAT PLM
+re-locks to `0xfffffb8f`. The other sampled words are constant. That is a
+reset-domain coupling, not a second gate; the effective gate is still the FEAT
+PLM ([the re-lock
+record](experiments/01_software-register-writes.md#019-the-re-lock-moves-fuse_ss_plm-and-no-fsp-register)).
 
-**Decision.** The reads show whether a separate secure-write qualification
-exists below the PLM, one that a future PL3 exploit would also have to satisfy.
-They cannot prove sufficiency; only a passing PL3 write can. Treat a closed
-qualification as a prerequisite, not a route.
+**Decision.** The measurement is done and shows no separate qualification. It
+cannot prove a PL3 write suffices; only a passing PL3 write can. The
+prerequisite remains open on sufficiency.
 
 ## Host FECS doorbell
 
@@ -309,44 +364,45 @@ qualification as a prerequisite, not a route.
 read/write-all at `0x4096d0`, and the GSP's doorbell write landed
 ([the FECS
 probe](experiments/03_fecs-and-gr-context.md#031-live-fecs-fsp-and-sec2-probes)).
-Every doorbell write was GSP-mediated; the host never wrote `0x409500` or
-`0x409504`, and the handler is encrypted
-([the command
+Before this test every doorbell write was GSP-mediated, and the handler is
+encrypted ([the command
 protocol](experiments/03_fecs-and-gr-context.md#032-the-fecs-command-protocol-statically)).
 
-**Try.** Host-write `0x409800`, `0x409500`, and `0x409504` with readback;
-replay the known-safe IDs `0x21` and `0x30`; if they execute, vary the `0x21`
-feature mask and read the bank and the issue rate. Use [register
-access](tools/register-access/) and [the issue-rate
-probe](tools/issue-rate-probe/). Only `0` and `1` were ever written to the
-doorbell, and `0x409504` is read-blocked but was never write-tested — the write
-path may differ from the read path. The command-ID injection is the missing
-step: the live probes mapped the protocol statically but never pushed an
-attacker-chosen ID through it.
+**Measured.** The mailbox is a host surface. BAR0 writes to `0x409500` and
+`0x409504` execute a command; the completion echo lands at `0x409800` (`0x21`
+for command `0x21`), and the ID read is blocked. Command `0x21` executes from
+both PL2 and the host, but the FEAT bank and the issue rate do not move across
+four feature masks. An unassigned ID (`0x7ff`) leaves the status clear and
+fatal-errors the FECS (`Xid 13`; `Xid 154` reset required), so the handler has
+no safe default ([the host command
+record](experiments/03_fecs-and-gr-context.md#0310-the-host-can-command-fecs-and-an-unknown-id-is-fatal)).
 
-**Decision.** Dropped host writes close the path. Accepted writes make the
-FECS command interface a PL0 surface, and the mask sweep answers whether a
-command can select the rate.
+**What remains.** The context-buffer loader (`0x30`–`0x32`, `0x75`, `0x76`)
+takes host-supplied addresses. That is a pointer-injection test, not a rate
+test, and a bad address is likely another FECS fatal, so it needs a sacrificial
+card. A hidden selector command would have to be named from the encrypted
+handler; the unknown-ID fatal makes brute-force enumeration destructive.
+
+**Decision.** Closed as a rate route and as a safe enumeration route. The host
+command surface is a PL0 DoS primitive, not a lever.
 
 ## ICD write opcodes
 
 **Where it comes from.** The PRISCV ICD is a live host debug port: after a
 halt, `RREG`, `RCSR`, and `RDM` read the RM code segment byte-exact
 ([the live ICD](experiments/04_hs-sec2-fsp-memory.md#044-priscv-icd-is-a-live-debug-port)).
-The write-memory closure rests on the public header's opcode list — the
-driver's API, not the hardware command set — and no write opcode was ever
-sent. The halt harness already exists in [the driver
-harness](tools/driver-harness/).
+The write-memory closure rested on the public header's opcode list — the
+driver's API, not the hardware command set — and no write opcode had ever
+been sent.
 
-**Try.** While halted, send the write-opcode candidates around the known read
-commands, read back, and restore.
+**What closed.** Twenty-four candidate opcodes were sent to a halted core
+against a zero span inside the code window, each with data latched and a
+readback. The unassigned opcodes all return `ERROR[14]` and change nothing;
+four "accepted" candidates are `RDM` aliases in disguise. The port is
+read-only on hardware
+([the aperture](experiments/04_hs-sec2-fsp-memory.md#046-the-icd-aperture-is-the-code-segment)).
 
-**Decision.** A refused opcode confirms the header list and closes the port.
-A write that lands is a code-modification primitive over the RM segment at
-PL2 — the same foothold class as [the SR saved
-state](#sr-saved-state-malleability), and it would let the [readout
-decode](experiments/12_feat-readout-decode.md) be checked against live
-state.
+**Decision.** Closed. No code-modification foothold exists at this port.
 
 ## Ada payload from PL2
 
@@ -357,17 +413,21 @@ The mask predicts a drop. The two PRO 6000s run full rate with every enable bit
 clear, so the override may be unused on Blackwell
 ([the reference
 dump](experiments/08_assessment-and-cross-checks.md#0810-an-rtx-pro-6000-reference-dump)).
-The override-enable fuses now bound the read: `FUSE_EN_SW_OVERRIDE` reads `0`
-on both 5090s as well ([the debugger
-group](experiments/10_debugger-class-and-fecs-ucode.md#102-the-context-and-descriptor-spaces-read)),
-so the override path is not fuse-enabled on this generation.
+`FUSE_EN_SW_OVERRIDE = 0` on both 5090s ([the debugger
+group](experiments/10_debugger-class-and-fecs-ucode.md#102-the-context-and-descriptor-spaces-read))
+does not bound this payload: that fuse gates the CTRL_OPT floorsweep override,
+not the speed selectors, and the prior art writes the same payload on the CMP
+170HX, which also reads `0` ([the two override
+paths](specs/02_privilege-and-rate-control.md#the-two-override-paths)).
 
-**Try.** Write `SS0 = 0x88888888` and `SS1 = 0x8` from the GSP, read back, and
-restore.
+**Measured.** PL2 writes `SS0 = 0x88888888` and `SS1 = 0x8`; both read back the
+stock words (`0x21265043`, `0x00000006`) and the BF16→FP32 rate stays about
+226 TF/s. The PLM drops the write ([the payload
+test](experiments/01_software-register-writes.md#0110-the-exact-override-payload-is-dropped-from-pl2)).
 
-**Decision.** A drop is expected twice over — the mask and the fuse disable
-both predict it — so it closes the record but not the fuse question. A change
-is the unlock.
+**Decision.** Closed from PL2. The payload is only testable after a PL3 write
+opens `FEAT_OVR_PLM`; [the override payload
+format](#override-payload-format) remains the post-writer question.
 
 ## Name the writer
 
@@ -376,19 +436,25 @@ first open ([the re-lock
 test](experiments/05_fmc-fsp-boot-inputs.md#0521-plm-re-lock-is-autonomous-devinit)),
 but the "PMU" (power-management microcontroller) attribution is an inference.
 The reset mask admits both L2 and L3,
-and the FSP is equally admitted ([the reset
+so the FSP was equally admissible at the outset ([the reset
 window](experiments/01_software-register-writes.md#016-the-post-reset-window-closes-before-gsp-rm)).
 
-**Try.** Poll the FSP core status, scratch, engine, and PLM alongside the FEAT
-PLM across the FLR window. The offline side is already negative: the GSP-RM
-literal scan over the rate registers, the PLM included, came back empty
-([the static
-audit](experiments/02_registry-and-static-audit.md)), so the writer is not RM
-code; a computed-offset re-check would close the residual doubt
-([C23](#computed-offset-sweep-and-devinit-handlers)).
+**Measured.** The FLR poll samples the FSP core status, scratch, version,
+engine, block PLM, core PLM, and the 16-byte constant every 5 ms. Every one is
+constant through the 1353 ms re-lock and the GSP start at 2991–3174 ms. The
+writer is the PMU or a hardware latch, not the FSP/BootROM on the visible
+registers ([the re-lock
+record](experiments/01_software-register-writes.md#019-the-re-lock-moves-fuse_ss_plm-and-no-fsp-register)).
 
-**Decision.** FSP activity at the re-lock names the FSP or BootROM class. No
-activity leaves the PMU or a hardware latch in play.
+**What remains.** The offline side is negative: the GSP-RM literal scan over
+the rate registers, the PLM included, came back empty ([the static
+audit](experiments/02_registry-and-static-audit.md)), so the writer is not RM
+code. The PMU base is unknown; [engine-map
+completion](#engine-map-completion) is where the actor is named. Naming it does
+not unlock the card.
+
+**Decision.** Measured: the FSP is excluded on the visible registers. The PMU
+or a hardware latch remains.
 
 ## Computed-offset sweep and devinit handlers
 
@@ -441,30 +507,29 @@ with per-blob keys that SEC2 derives in High-Secure mode; the plaintext parts
 are the load descriptors, not the code
 ([the blob
 directory](experiments/13_fwimage-map-and-bindata.md#135-the-generic-header-blob-directory)).
-But the boot capture shows the RM starting GR through `sec2_acr` with
-RM-memory pointers ([the consumer
-record](experiments/11_falcon-and-gr-window-probe.md#116-no-stack-component-reads-the-ucode-table)),
-and the debug engine reads RM memory byte-exact after a halt
-([the live ICD](experiments/04_hs-sec2-fsp-memory.md#044-priscv-icd-is-a-live-debug-port)).
-The decrypted FECS/GPCCS ucode therefore transits RM-visible memory between
-SEC2's decrypt and the falcon's IMEM load
+The transit record proposed that the decrypted FECS/GPCCS ucode passes
+through RM-visible memory between SEC2's decrypt and the falcon's IMEM load,
+and that a timed halt-and-dump through the debug engine would capture it
+with no key
 ([the transit
-record](experiments/13_fwimage-map-and-bindata.md#136-the-decrypted-ucode-transits-rm-memory)).
+record](experiments/13_fwimage-map-and-bindata.md#136-the-decrypted-ucode-transit-and-its-read-route)).
 
-**Try.** Time a read against the `sec2_acr` window. Arm the driver harness's
-samplers or a direct probe around GR boot, halt the GSP through the debug
-engine at the staged point, and dump the staging buffers. Identify the GR
-blobs by their load maps first — one header maps a `0x400` data segment and a
-`0xbe00` code image at `0xf900` — then search the captured image for the FEAT
-bank words (`0x8238xx` family) and the fuse words. Use [the driver
-harness](tools/driver-harness/) and [the GSP-RM
-tools](tools/gsp-rm-tools/); expect a hang-and-reboot budget.
+**What closed.** Both legs are measured out. The `sec2_acr` log args that
+motivated the transit were a 4-second timeout pair, not staging pointers —
+the transit itself is unproven
+([the decode](experiments/13_fwimage-map-and-bindata.md#137-the-sec2_acr-args-are-a-timeout-pair)).
+And the halted-core ICD reads exactly the RM code segment and refuses the
+heap, the runtime range, and the WPR, with no write opcode either — so no
+read at any moment reaches a staging buffer
+([the aperture](experiments/04_hs-sec2-fsp-memory.md#046-the-icd-aperture-is-the-code-segment)).
+The census work survives: the two `0xf900` blobs are the GR-falcon shape,
+and the dump matcher is ready for any future read primitive
+([the census](experiments/13_fwimage-map-and-bindata.md#138-the-blob-census-five-families)).
 
-**Decision.** If the captured FECS code reads the FEAT bank, the PL3 program
-is validated and the capture names the exact words a PL3 write must set. If it
-does not, the enforcement is silicon-side and no firmware route changes the
-rate — the honest stopping condition for the register program. The staging
-buffer's lifetime is the unknown; the first run measures it.
+**Decision.** Closed as designed. The enforcement fork — FECS ucode or
+silicon — moves to [the FECS doorbell](#host-fecs-doorbell), which answers
+behaviorally whether a FECS command can select the rate. A new read
+primitive into WPR memory would reopen this lead; none is known.
 
 ## vBIOS app 0x23
 
@@ -488,17 +553,22 @@ for the dump and parse.
 
 ## Override payload format
 
-**Where it comes from.** The full-rate readout and fuse target is measured on
-two RTX PRO 6000s: both read `FEAT_READOUT_1 = 0` with every arithmetic speed
-fuse at 0, and card A runs BF16 at 518 TF/s with the FP16-accumulate rate equal
+**Where it comes from.** The full-rate readout is measured on two RTX PRO
+6000s: both read `FEAT_READOUT_1 = 0` with every arithmetic speed fuse at 0,
+and card A runs BF16 at 518 TF/s with the FP16-accumulate rate equal
 ([the reference
 dump](experiments/08_assessment-and-cross-checks.md#0810-an-rtx-pro-6000-reference-dump)).
-Both cards also have every `SS0`/`SS1` enable bit clear, so the full rate comes
-from the fuses, not a live override — and the override path is not fuse-enabled
-on this generation, so the payload is not the plan
-([the closed list](#closed-do-not-retry)). The override payload format is a
-post-writer question: without a write that passes the PLM, no boot series can
-validate it.
+Both cards also have every `SS0`/`SS1` enable bit clear, so their full rate
+comes from the absence of a fuse penalty: an already-zero selector needs no
+override. A throttled part needs the override, and its format is the one the
+prior art measured, `SS0 = 0x88888888` and `SS1 = 0x8`, written from the host
+once PL3 code opens `FEAT_OVR_PLM` ([the two override
+paths](specs/02_privilege-and-rate-control.md#the-two-override-paths)). The
+payload is therefore a post-writer question: without a write that passes the
+PLM, no boot series can validate it on GB202. The PL2 variant is now measured
+and drops ([the payload
+test](experiments/01_software-register-writes.md#0110-the-exact-override-payload-is-dropped-from-pl2));
+only the post-writer form remains.
 
 **Try.** Run the existing FP16-accumulate mode on the 5090 to measure its cap
 ratio locally ([the issue-rate probe](tools/issue-rate-probe/)). Get a same-card
@@ -511,9 +581,11 @@ add the PRO 6000's vBIOS and GSP-RM image to the same session, so [vBIOS app
 get the full-rate card's corpus. Run the exact payload only after a PL3 writer
 exists.
 
-**Decision.** If a PRO boot shows an enable bit, that is the payload. Otherwise
-the words are runtime state and the payload stays unvalidated. Fold the
-cold-boot series into a future PRO rental; do not plan a run around it.
+**Decision.** A PRO enable bit would mean the full-rate part also sets the
+override; its absence leaves the words as runtime state. The format is already
+measured on the prior art, so the cold-boot series sharpens the picture but
+does not validate the payload on GB202. Fold it into a future PRO rental; do
+not plan a run around it.
 
 ## vBIOS ucode corpus
 
@@ -582,6 +654,168 @@ bindata corpus, weigh the search against [the staged-ucode
 capture](#staged-ucode-capture) first: the capture reads the same code with
 no key at all.
 
+## Discovery: what produces new information
+
+These leads do not test a route to the FEAT bank. Each one is a measurement
+program that can generate new hypotheses, and each is a prerequisite for
+judging the leads above.
+
+### Debugger-class command census
+
+**Where it comes from.** The class is exposed to a CUDA process and reads the
+FEAT bank through `NV83DE_CTRL_CMD_DEBUG_EXEC_REG_OPS` ([the class
+record](experiments/10_debugger-class-and-fecs-ucode.md#101-the-class-is-exposed-and-allocatable)).
+The public `0x83de` interface also defines `READ_MEMORY` and `WRITE_MEMORY`
+(`0x83de0315` and `0x316`), the batch forms (`0x326` and `0x327`),
+`READ_SURFACE`, `GET_MAPPINGS`, `SUSPEND_CONTEXT`,
+`READ_ALL_SM_ERROR_STATES` (`0x30c`), and the ERRbar and single-step commands.
+Only the register-op command was issued ([the debugger
+test](experiments/01_software-register-writes.md#018-the-debugger-class-reads-the-bank-but-cannot-write-it)).
+
+**Try.** With the existing `LD_PRELOAD` debugger object, issue one command per
+boot. Start with `READ_ALL_SM_ERROR_STATES` and `GET_MAPPINGS`; then the memory
+reads and `SUSPEND_CONTEXT` against the handle the class already holds, then a
+global or PRAMIN handle. Read only; a bad command can drop the CUDA context.
+
+**Decision.** A memory read that reaches a buffer the caller did not map, or an
+SM error state that exposes a selector copy, is a new read surface. A uniform
+`NV_ERR_INVALID_ARGUMENT` or `NOT_SUPPORTED` closes the non-register commands
+and leaves the class as an observability path only.
+
+### Timed EMEM and DMEM capture
+
+**Where it comes from.** The GSP EMEM, the FSP EMEM channels, and the SEC2
+DMEM port are host-readable. They were sampled with the driver bound and the
+GSP-RM running, and read empty or constant ([the GSP EMEM
+record](experiments/04_hs-sec2-fsp-memory.md#041-gsp-emem-is-real-but-empty),
+[the ICD aperture](experiments/04_hs-sec2-fsp-memory.md#046-the-icd-aperture-is-the-code-segment)).
+The FMC decrypts and runs before the GSP-RM exists, and the SEC2 decrypt window
+is about 20 ms, bracketed by the `sec2_acr` log pair ([the timeout
+decode](experiments/13_fwimage-map-and-bindata.md#137-the-sec2_acr-args-are-a-timeout-pair)).
+The steady-state sample cannot see either window.
+
+**Try.** Use [the direct probe](tools/direct-probe/) on a cold boot and stream
+the GSP EMEM (`0x110ac0`), the SEC2 DMEM port (`0x8401c0`), and the four FSP
+EMEM channels (`0x8f0ac0`–`0x8f0adc`) with the auto-increment read flag. Arm on
+the first `sec2_acr` line, again on the first `gr_fecs` line, and across a GC6
+re-decrypt. Read only, and budget a wedge. Also capture a GSP core dump and
+check whether it carries RM heap or engine state.
+
+**Decision.** Any plaintext parcel or key-shaped block in a port is a read
+primitive and the first decrypted FMC or ucode bytes. A uniform zero or
+constant across all windows closes the ports and leaves the ICD as the only
+measured read path.
+
+### Engine-map completion
+
+**Where it comes from.** At the documented bases the PMU is all sentinel,
+FECS `0x409000` is a sparse GR block rather than a falcon, and GPCCS is absent
+([the falcon probe](experiments/11_falcon-and-gr-window-probe.md#111-the-falcon-blocks-answer-or-refuse)).
+The PMU is the leading FEAT-writer candidate ([name the
+writer](#name-the-writer)), and the `0x500000` block, the `0x1c0000` PLM, and
+target `0x0e` are unidentified ([the GR
+map](experiments/11_falcon-and-gr-window-probe.md#114-the-space-above-the-window-is-the-vbios-rom),
+[the ucode table](experiments/11_falcon-and-gr-window-probe.md#113-the-ucode-table-is-the-pmu-lookup-table),
+[the bodies](experiments/10_debugger-class-and-fecs-ucode.md#103-the-vbios-ucode-bodies)).
+The map is incomplete, so "no host window" is a statement about the tested
+bases only.
+
+**Try.** Scan BAR0 read-only for the falcon `HWCFG2`, `CPUCTL`, and
+`ENGINE_RESET` signature, skipping the `0x300000`–`0x400000` hazard. Compare
+the signature offsets with the GSP, FSP, and SEC2 blocks. Then map the
+`0x500000` block and the `0x1c0000` PLM with the same three-register test.
+
+**Decision.** A new falcon block with a readable `HWCFG2` is a new engine
+window; if it is the PMU it names the writer. A scan with no new signature
+closes the undocumented-base search and leaves the documented map.
+
+### RM interface and log census
+
+**Where it comes from.** The GR control table has 44 entries and no rate setter
+([the rate getter](experiments/07_plaintext-corpus.md#076-the-rate-getter-has-no-hidden-setter)).
+That census covers one control class. The plaintext RM also holds the other
+control classes, the falcon accessors, and the FWSEC-LIC unit whose strings
+name the secure-data path ([the secure-data
+unit](experiments/13_fwimage-map-and-bindata.md#134-the-fwsec-lic-secure-data-unit)).
+The exact FWSEC-to-SEC2 sequence and the falcon accessors are unmapped.
+
+**Try.** Enumerate every control-table entry and handler in the plaintext RM:
+control ID, parameter size, and whether the handler touches the `0x8238xx`
+bank, a fuse word, a falcon base, or the FWSEC path. Build a log-string map for
+`override`, `speed`, `PLM`, `fuse`, `ucode`, `secure`, and `falcon`, and
+resolve each string to its log thunk. Then decompile the FWSEC-LIC callers and
+the falcon accessors.
+
+**Decision.** A host-callable handler that reads or writes engine memory, or
+that selects a ucode image, is a new surface. A complete map with no such
+handler narrows the search to the PL3 code and the debugger class.
+
+### Cross-version corpus diff
+
+**Where it comes from.** Every static claim is one driver and one GSP-RM
+version, 595.91.07, plus one PRO 615.71.09 ([the fwimage
+map](experiments/13_fwimage-map-and-bindata.md#131-the-libos-manifest-and-the-module-chain)).
+The driver package ships production and debug FMC containers, and the
+14-container corpus already exists for the key search ([the FMC
+container](experiments/07_plaintext-corpus.md#074-fmc-container-format-and-signature)).
+No version-to-version diff has been run.
+
+**Try.** Extract the GSP-RM, `GspRmBoot`, FMC headers, and vBIOS from every
+available driver branch, Linux and Windows, plus the public `linux-firmware`
+sample. Diff the plaintext GSP-RM per module, the vBIOS init tables, and the
+FMC headers; correlate header fields with production/debug, version, and the
+inline key block.
+
+**Decision.** A check that appears only in a later version names a
+security-relevant parser and an older image to test. A stable header with no
+key field closes the header as a key source.
+
+### Crypto-model and key-source program
+
+**Where it comes from.** The MD5-IV permutation family is exhausted on the FMC
+under five modes ([the key
+search](experiments/07_plaintext-corpus.md#0710-the-fmc-key-search-comes-back-negative)),
+but the mode, key size, and key source are unestablished, and the corpus was
+never compared across cards or versions. The same component encrypts
+identically at different offsets within one image, which rules out a global
+chaining mode but not a per-component reset ([the FMC
+container](experiments/07_plaintext-corpus.md#074-fmc-container-format-and-signature)).
+The vBIOS bodies have a shared plaintext preamble the FMC search never used
+([the bodies](experiments/10_debugger-class-and-fecs-ucode.md#103-the-vbios-ucode-bodies)).
+
+**Try.** Compare the same FMC, `GspRmBoot`, and bindata component across two
+cards and two driver versions. If the ciphertext is identical, the key is
+image-wide; if it differs, it is device- or image-bound. Then correlate the
+14 FMC headers with production/debug and the inline key block, test the
+untested modes and key sizes, and run a known-plaintext oracle on the vBIOS
+preamble.
+
+**Decision.** Identical cross-card ciphertext makes an offline key attack
+meaningful and gives the mode constraints. Different ciphertext ends the
+offline FMC route and moves the program to [the timed port
+capture](#timed-emem-and-dmem-capture) and the [PL2 read
+oracle](#pl2-read-oracle).
+
+### PL2 read oracle
+
+**Where it comes from.** The GSP-RM runs at PL2, owns the WPR, and loads the
+engine ucode. A patched RM is treated as a foothold for probes, not as a read
+path ([the
+assessment](experiments/08_assessment-and-cross-checks.md#0811-the-register-route-is-a-pl3-problem)).
+The RM's falcon accessors and the FWSEC path are unmapped ([the
+census](#rm-interface-and-log-census)), and the boot race is the enabler
+([the boot-input race](#boot-input-race)).
+
+**Try.** After a boot-race or RM-bug primitive, read FECS and GPCCS IMEM
+through the RM's own falcon access, and dump the WPR and FRTS through its heap
+access. Start with the ucode the RM just staged, then the saved state. Keep the
+stock restore path.
+
+**Decision.** A single byte of decrypted engine ucode confirms the RM as the
+read oracle and turns the enforcement question into a code review. A primitive
+that cannot read engine memory leaves the ICD and the ports as the only read
+paths.
+
 ## Closed, do not retry
 
 - The flanking readouts as a target. Every RM consumer of `FEAT_READOUT_0`
@@ -595,16 +829,6 @@ no key at all.
   every arithmetic speed fuse at 0; one runs BF16 at 518 TF/s. Do not re-plan
   around the A100 inference ([the reference
   dump](experiments/08_assessment-and-cross-checks.md#0810-an-rtx-pro-6000-reference-dump)).
-- Planning around the `SS0`/`SS1` override payload as the unlock mechanism.
-  Every measured GB202 card — two 5090s, two PRO 6000s — reads
-  `FUSE_EN_SW_OVERRIDE = 0`: the override path is not fuse-enabled on this
-  generation, so the payload faces a fuse disable before the PLM ([the
-  debugger
-  group](experiments/10_debugger-class-and-fecs-ucode.md#102-the-context-and-descriptor-spaces-read),
-  [the reference
-  dump](experiments/08_assessment-and-cross-checks.md#0810-an-rtx-pro-6000-reference-dump)).
-  The cheap payload write ([Ada payload from PL2](#ada-payload-from-pl2))
-  still completes the record; it is not the plan.
 - More 16! MD5-IV key passes. The family is exhausted under ECB, CBC-zero and
   header-IV, and CTR starts 0 and 1; the untested modes and the intermediate
   round keys live in [the vBIOS ucode key
@@ -612,12 +836,32 @@ no key at all.
   search](experiments/07_plaintext-corpus.md#0710-the-fmc-key-search-comes-back-negative)).
 - FUSE-shadow writes. Dropped from PL0 and PL2 ([the FUSE
   test](experiments/01_software-register-writes.md#014-the-fuse-shadow-and-the-inert-modifier)).
-- ICD write memory, as a driver-API claim. The public header defines read and
-  control opcodes only; the hardware check is [the one-hour opcode
-  probe](#icd-write-opcodes), not a retry of the read path ([the live
-  ICD](experiments/04_hs-sec2-fsp-memory.md#044-priscv-icd-is-a-live-debug-port)).
-- Direct PL2 FEAT or PLM writes. Dropped by the mask ([the write
-  test](experiments/01_software-register-writes.md#012-speed-register-write-from-gsp-is-dropped)).
+- ICD write memory. The public header defines read and control opcodes only,
+  and the hardware sweep confirms it: twenty-four write candidates refused
+  or aliased to `RDM` on a halted core
+  ([the aperture](experiments/04_hs-sec2-fsp-memory.md#046-the-icd-aperture-is-the-code-segment)).
+- ICD reads outside the code segment from a halted core. The aperture is
+  `0x01000000–0x01DCD000`; the container bindata, the data segment, the
+  whole runtime range at 1 MiB steps, and every WPR address refuse
+  ([the aperture](experiments/04_hs-sec2-fsp-memory.md#046-the-icd-aperture-is-the-code-segment)).
+- The staged-ucode capture through the ICD. The transit through RM-visible
+  memory is unproven — its evidence was a misread timeout pair — and no tested
+  host read path reaches the heap or WPR ([the transit
+  record](experiments/13_fwimage-map-and-bindata.md#136-the-decrypted-ucode-transit-and-its-read-route)).
+  The EMEM and DMEM ports were sampled only at steady state; [the timed port
+  capture](#timed-emem-and-dmem-capture) is the untested route.
+- Direct PL2 FEAT or PLM writes, including the exact `0x88888888`/`0x8`
+  payload. Dropped by the mask, with no rate change ([the write
+  test](experiments/01_software-register-writes.md#012-speed-register-write-from-gsp-is-dropped),
+  [the payload
+  test](experiments/01_software-register-writes.md#0110-the-exact-override-payload-is-dropped-from-pl2)).
+- The FECS command set as a rate selector. The host and PL2 can issue commands,
+  but the known `0x21` command does not move the bank or the rate, and the
+  plaintext command map has no selector ([the host command
+  record](experiments/03_fecs-and-gr-context.md#0310-the-host-can-command-fecs-and-an-unknown-id-is-fatal)).
+- Unassigned FECS command IDs as a probe. An unknown ID fatal-errors the FECS
+  (`Xid 13`), so a blind sweep is destructive ([the host command
+  record](experiments/03_fecs-and-gr-context.md#0310-the-host-can-command-fecs-and-an-unknown-id-is-fatal)).
 - Registry speed keys. Parsed, stored, booleanized, inert ([the registry
   sweep](experiments/02_registry-and-static-audit.md#024-speed-select-keys-are-inert-on-hardware)).
 - BAR1 and physical address `0x5dd00000`. Structurally closed ([the FB
@@ -625,14 +869,17 @@ no key at all.
 - CUDA debugger-class FEAT writes. The class reads the bank and the write drops
   ([the debugger
   test](experiments/01_software-register-writes.md#018-the-debugger-class-reads-the-bank-but-cannot-write-it)).
-- Reading FECS/GPCCS code or state from the host. The FECS, GPCCS, and PMU falcon
-  bases return decode or not-implemented markers, the security engines block
-  their boot vectors, and the GR window the GSP-RM admits is empty. The space
-  above it is the vBIOS ROM and one per-card table, not ucode ([the falcon
+- Reading FECS/GPCCS code or state from the host at the documented bases. The
+  FECS, GPCCS, and PMU falcon bases return decode or not-implemented markers,
+  the security engines block their boot vectors, and the GR window the GSP-RM
+  admits is empty. The space above it is the vBIOS ROM and one per-card table,
+  not ucode ([the falcon
   probe](experiments/11_falcon-and-gr-window-probe.md), [the
   window](experiments/11_falcon-and-gr-window-probe.md#112-the-admitted-gr-window-is-empty),
   [the GR
   map](experiments/11_falcon-and-gr-window-probe.md#114-the-space-above-the-window-is-the-vbios-rom)).
+  The PMU base is unknown; [engine-map
+  completion](#engine-map-completion) is where the search continues.
 - Reading ucode through the vBIOS table on GB202. The host FWSEC path is
   chip-gated to a stub and the RM boots GR through `sec2_acr` from RM memory
   ([the consumer

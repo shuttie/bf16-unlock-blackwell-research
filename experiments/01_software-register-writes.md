@@ -29,6 +29,10 @@
   reads the bank and its FEAT write drops too.
 - The [post-reset window closes too early](#016-the-post-reset-window-closes-before-gsp-rm),
   and the [per-context types are rejected](#017-per-context-registers-need-a-caller-owned-channel).
+- The [exact override payload is dropped from PL2](#0110-the-exact-override-payload-is-dropped-from-pl2),
+  like the zero write, and the rate does not move.
+- The [re-lock moves only `FUSE_SS_PLM` and no FSP
+  register](#019-the-re-lock-moves-fuse_ss_plm-and-no-fsp-register).
 
 **What it did not find.**
 
@@ -51,6 +55,8 @@
 | 01.6 | [The post-reset window closes before GSP-RM](#016-the-post-reset-window-closes-before-gsp-rm) | Window ends before GSP-RM exists |
 | 01.7 | [Per-context registers need a caller-owned channel](#017-per-context-registers-need-a-caller-owned-channel) | Context route closed at PL0 |
 | 01.8 | [The debugger class reads but cannot write](#018-the-debugger-class-reads-the-bank-but-cannot-write-it) | Read matches; write drops |
+| 01.9 | [The re-lock moves `FUSE_SS_PLM` and no FSP register](#019-the-re-lock-moves-fuse_ss_plm-and-no-fsp-register) | One fuse word moves; FSP silent |
+| 01.10 | [The exact override payload is dropped from PL2](#0110-the-exact-override-payload-is-dropped-from-pl2) | Payload dropped; rate unchanged |
 
 ## 01.1 First register write hits a crashed GSP
 
@@ -497,6 +503,7 @@ sudo tools/driver-harness/plm_window_race.sh measure 0000:41:00.0
 | missed | [`0xfffffb8f`](../specs/03_register-map.md#write-gate) | not measured | not logged |
 | A | [`0x80842bcf`](../specs/02_privilege-and-rate-control.md#privilege-levels-and-the-plm) | 1156 ms | not logged |
 | B | `0x80842bcf` | 1323 ms | 3176 ms |
+| C | `0x80842bcf` | 1353 ms | 3174 ms |
 
 In both measured runs the window opened at t=0 with `plm=0x80842bcf`. The first
 sample shows the pre-bind state:
@@ -518,15 +525,15 @@ The boot-image PC (`0xefd00000`–`0xefd47000`) was not sampled in either run.
 
 **Result.**
 
-- **Answer:** no. The window is 1156–1323 ms; it closes 1853 ms before GSP-RM
-  starts.
+- **Answer:** no. The window is 1156–1353 ms; it closes about 1.82–1.85 s before
+  GSP-RM starts.
 - **What we learned:**
   - The bind consumes about 1.0 s of the window; the open→GSP-RM path is about
     2.1 s, longer than the window even with a zero-delay open.
-  - The re-lock is a pre-boot GPU-side devinit (FSP/PMU/hardware), not the FMC or
-    GSP-RM
-    ([the boot-input experiments](../experiments/05_fmc-fsp-boot-inputs.md)
-    bracket it).
+  - The re-lock is a pre-boot GPU-side devinit (PMU or hardware), not the FMC or
+    GSP-RM ([the boot-input experiments](../experiments/05_fmc-fsp-boot-inputs.md)
+    bracket it; the [re-lock poll](#019-the-re-lock-moves-fuse_ss_plm-and-no-fsp-register)
+    sees no FSP register activity).
   - The "boot the GSP early" variant is retracted; `benign` and `payload` were not
     run because they cannot win and would only cost an FLR.
   - The re-mapping BAR0 poller and race harness time the window without touching
@@ -731,4 +738,133 @@ attempt at `0x137200` with `0xbadf5128`
 - **Open question:** the op is still useful for read-only observation. Whether
   it exposes other engine blocks, or a write through a different debug
   subcommand, is untested.
+
+## 01.9 The re-lock moves FUSE_SS_PLM and no FSP register
+
+**Question.** Which registers move with the post-FLR re-lock, and does the FSP
+act?
+
+**Why.**
+
+- [01.6](#016-the-post-reset-window-closes-before-gsp-rm) timed the window with
+  the FEAT bank and the GSP state only.
+- The C05 lead asks whether a second write qualification sits below the
+  [PLM](../specs/02_privilege-and-rate-control.md#privilege-levels-and-the-plm);
+  the C06 lead asks whether the FSP or the PMU performs the re-lock.
+- What it would give: a second gate, or a narrower writer.
+
+**Method.**
+
+- Tool: `session_a.sh flr` from [driver harness](../tools/driver-harness/);
+  `session_a_poll` samples BAR0 every 5 ms with the stock driver.
+- Target: `41:00.0`, root.
+- Steps: unbind, FLR, start the poller before the bind, bind, first open, 36 s
+  capture. Sample the FEAT bank, the fuse security words, the FSP core block,
+  and the GSP engine/reset PLM/PC.
+- Args used:
+```bash
+sudo tools/driver-harness/session_a.sh flr
+```
+
+**Observed data.** Six thousand samples over 36 s; the first sample is already
+after the FLR.
+
+| Event | Time after FLR |
+|---|---:|
+| `FEAT_OVR_PLM` = `0x80842bcf` | 0 ms |
+| `FEAT_OVR_PLM` = `0xfffffb8f`; `FUSE_SS_PLM` = `0xfffffbff` | 1353 ms |
+| GSP engine `0xbadf5720`; reset PLM `0x00000f00` | 2991 ms |
+| First GSP-RM PC `0x9300f516` | 3174 ms |
+
+`FUSE_SS_PLM` (`0x8200fc`) read `0xfffffbff` before the FLR, `0x80842bcf` at
+t=0, the same value as the FEAT PLM, and `0xfffffbff` again at 1353 ms. Every
+other sampled fuse security word stayed constant: `0x82038c = 2`,
+`0x8203f0 = 0`, `0x8200d0/d8/dc/f8 = 0xfffffb8f`, `0x8200d4 = 0xfffffbfc`,
+`0x820040 = 0`, `0x820084 = 1`, `0x8207d8 = 3`.
+
+The FSP block was constant for the whole window:
+
+```text
+hwcfg     0x80420100    scratch  0x0000009f    ver    0x0000000a
+engine    0x00000200    blkplm   0x00040bff    status 0x6624b970
+config    0x00000003    coreplm  0xffffff8f    const  0xe81dc861
+```
+
+`SS0`, `SS1`, and `FEAT_READOUT_1` did not change.
+
+**Result.**
+
+- **Answer:** the re-lock moves the FEAT PLM and `FUSE_SS_PLM` together; no FSP
+  register moves.
+- **What we learned:**
+  - The `0x8200fc` value at t=0 equals the FEAT PLM because both take the FLR's
+    `0x80842bcf`. It re-locks to write-all while the FEAT PLM re-locks to
+    PL3-only, so it is a reset-domain coupling, not a second gate.
+  - The FSP core status, scratch, version, engine, block PLM, and core PLM are
+    constant. The writer is the PMU or a hardware latch, not the FSP/BootROM on
+    the visible registers.
+  - The re-lock lands 1821 ms before the first GSP-RM PC, consistent with
+    [01.6](#016-the-post-reset-window-closes-before-gsp-rm).
+- **Related:**
+  - The [fuse table](../specs/03_register-map.md#fuse-and-otp) carries the
+    `0x8200fc` value.
+  - The [boot-input re-lock
+    test](../experiments/05_fmc-fsp-boot-inputs.md#0521-plm-re-lock-is-autonomous-devinit)
+    names the reset behavior.
+- **Open question:** the PMU base is unknown; [engine-map
+  completion](../IDEAS.md#engine-map-completion) is where the writer is named.
+
+## 01.10 The exact override payload is dropped from PL2
+
+**Question.** Does the exact prior-art payload, `SS0 = 0x88888888` and
+`SS1 = 0x8`, change the bank or the rate when written from PL2?
+
+**Why.**
+
+- [01.2](#012-speed-register-write-from-gsp-is-dropped) wrote `SS0 = 0`, not the
+  payload.
+- The fuse reading does not predict a drop; a change would be the unlock.
+- What it would give: the unlock, or closure of the last PL2 payload variant.
+
+**Method.**
+
+- Tool: `session_a.sh regs`; `regops wrr` from
+  [register access](../tools/register-access/); the
+  [issue-rate probe](../tools/issue-rate-probe/).
+- Target: `41:00.0`, root.
+- Steps: read the bank, write and restore the payload from PL2, read back, and
+  run the probe before and after.
+- Args used:
+```bash
+sudo tools/driver-harness/session_a.sh regs
+```
+
+**Observed data.**
+
+```text
+SS0 write 0x88888888 -> readback 0x21265043
+SS1 write 0x00000008 -> readback 0x00000006
+FEAT_OVR_PLM                         0xfffffb8f
+```
+
+| Mode | Before, Top/s | After, Top/s |
+|---|---:|---:|
+| `f16_f32` | 226.93 | 226.95 |
+| `bf16_f32` | 226.86 | 226.24 |
+| `tf32` | 113.44 | 113.10 |
+| `u4_s32` | 591.57 | 596.39 |
+
+**Result.**
+
+- **Answer:** dropped. The payload behaves exactly like the zero write.
+- **What we learned:**
+  - PL2 cannot write the selectors, so no PL2 variant is testable on hardware.
+  - The exact payload is only testable after a PL3 write opens
+    [`FEAT_OVR_PLM`](../specs/03_register-map.md#write-gate).
+- **Related:**
+  - The [GSP write drop](#012-speed-register-write-from-gsp-is-dropped) is the
+    same behavior with `SS0 = 0`.
+  - The [PLM decode](#015-the-permission-mask-admits-pl3-writes-only) is the gate.
+- **Open question:** the payload's effect after a PL3 write remains unmeasured
+  ([C04](../IDEAS.md#override-payload-format)).
 

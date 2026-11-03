@@ -98,16 +98,16 @@ Block `0x820000`–`0x8207ff`.
 | Offset | Name | Value / note |
 |---|---|---|
 | `0x00820000` | `FUSECTRL` | fuse controller |
-| `0x00820040` | `FUSE_EN_SW_OVERRIDE` | software override enable; `1` on consumer Ampere, `0` on A100/170HX and every measured GB202 card (two 5090s, two PRO 6000s) |
+| `0x00820040` | `FUSE_EN_SW_OVERRIDE` | CTRL_OPT floorsweep override enable; `1` on consumer Ampere, `0` on A100/170HX and every measured GB202 card (two 5090s, two PRO 6000s); it does not gate `SS0`/`SS1` ([the two override paths](02_privilege-and-rate-control.md#the-two-override-paths)) |
 | `0x0082007c` | `DISABLE_FUSE_PROGRAM` | fuse programming disable |
 | `0x00820084` | `FUSE_DIS_SW_OVR` | `1` on the sampled Ampere parts, both PRO 6000s, and the 5090 |
 | `0x008200d0`, `d8`, `dc`, `f8` | PLM-shaped | `0xfffffb8f` (read all / write L3) |
 | `0x008200d4`, `e8`, `ec`, `f0` | PLM-shaped | `0xfffffbfc` (read L2–L3 / write all) |
 | `0x008200e0`, `e4`, `f4` | PLM-shaped | `0x00800b8f` (read all / write L3) |
-| **`0x008200fc`** | `FUSE_SS_PLM` (page-0 mask) | **`0xfffffbff`**; reads as write-all, but it is not the effective gate |
+| **`0x008200fc`** | `FUSE_SS_PLM` (page-0 mask) | **`0xfffffbff`**; reads as write-all, but it is not the effective gate. An FLR resets it to `0x80842bcf`, the same value as `FEAT_OVR_PLM`, and it re-locks to `0xfffffbff` while the FEAT PLM re-locks to `0xfffffb8f` ([the re-lock record](../experiments/01_software-register-writes.md#019-the-re-lock-moves-fuse_ss_plm-and-no-fsp-register)) |
 | `0x00820224` | `FUSE_SS_DP` | `0` |
 | `0x0082038c` | `SECURE_FEAT_OVR_QUADRO_WR_SEC` | Quadro secure write; `1` on the sampled Ampere parts, `2` on both 5090s and both PRO 6000s |
-| `0x008203f0` | `FUSE_FEAT_OVR_DIS` / `OPT_FEATURE_FUSES_OVERRIDE_DISABLE` | `0` on all sampled parts: Ampere, two 5090s, two PRO 6000s |
+| `0x008203f0` | `FUSE_FEAT_OVR_DIS` / `OPT_FEATURE_FUSES_OVERRIDE_DISABLE` | `0` on all sampled parts: Ampere, two 5090s, two PRO 6000s; the master kill for the feature overrides, the speed selectors included, so `0` leaves the path available ([the two override paths](02_privilege-and-rate-control.md#the-two-override-paths)) |
 | `0x0082059c` | `FUSE_SS_FFMA` | `0` |
 | `0x0082074c` | `OPT_SECURE_GSP` / `..._DEBUG_DIS` | `1`; writes dropped from PL0 and PL2 |
 | `0x008207d4` | `FUSE_SS_FMLA16` | `0` |
@@ -122,13 +122,15 @@ The fuse shadow is soft-read-only from both PL0 and PL2, even where the PLM says
 otherwise; a PLM value is not a writability oracle. See [the fuse and rate-modifier
 test](../experiments/01_software-register-writes.md#014-the-fuse-shadow-and-the-inert-modifier).
 
-The override-enable fuses read the A100/170HX pattern on every measured GB202
-card — two 5090s, two PRO 6000s — so the software-override path is not
-fuse-enabled on this generation ([the debugger
+The override-related fuses read the A100/170HX pattern on every measured GB202
+card — two 5090s, two PRO 6000s. `FUSE_EN_SW_OVERRIDE = 0` gates the CTRL_OPT
+floorsweep override, not the speed selectors; `FUSE_FEAT_OVR_DIS = 0` leaves
+the selector override available ([the two override
+paths](02_privilege-and-rate-control.md#the-two-override-paths), [the debugger
 group](../experiments/10_debugger-class-and-fecs-ucode.md#102-the-context-and-descriptor-spaces-read),
 [the reference
-dump](../experiments/08_assessment-and-cross-checks.md#0810-an-rtx-pro-6000-reference-dump));
-the field semantics are the Ampere mapping carried over. The cross-part survey
+dump](../experiments/08_assessment-and-cross-checks.md#0810-an-rtx-pro-6000-reference-dump)).
+The field semantics are the Ampere mapping carried over. The cross-part survey
 reads the override path as architecturally available but requiring Falcon HS
 ([the external
 cross-check](../experiments/08_assessment-and-cross-checks.md#0811-the-register-route-is-a-pl3-problem)).
@@ -364,10 +366,10 @@ return `0xBADF5040` except `0x40940c = 0x7ff`, so the block is not a falcon core
 | `0x00409600` / `624` / `65c` / `660` / `688` / `6d0` / `438` | FECS PLMs | `0x409660 = 0xfffffbef`; `0x409688 = 0xffffffcf`; `0x409438 = 0xffffffef`; `0x4096d0 = 0xffffffff`; writes dropped |
 | `0x00409638` | implemented | `5` |
 | `0x00409664` / `668` | selector/readout copies | `0xBADF5040`; unimplemented |
-| `0x00409500` | command data | `0`; carries address/size words for context commands |
-| `0x00409504` | command ID | `0xBADF5545`; read-blocked (PRI `0xBADF55`) |
+| `0x00409500` | command data | `0`; carries address/size words for context commands; host- and GSP-writable |
+| `0x00409504` | command ID | `0xBADF5545`; read-blocked (PRI `0xBADF55`); host- and GSP-writable; a write executes the command |
 | `0x00409700`–`784` | adjacent config | `0x30`, `0x40001010`, `0x8097cbff`, `0x658bba81`, … under the open `0x4096d0` PLM |
-| `0x00409800` | command status/payload | **GSP-writable**; polled at `0x9800 + 4*param` |
+| `0x00409800` | completion/status | echoes the command ID for a known command; host- and GSP-writable; the GSP restores it to `1` |
 | `0x00409b00` / `04` | DP/companion readout | `0x007e0f0a` in the first probe; `0x80000130` through the debugger class later; state-dependent |
 | `0x00409b74` / `b7c` | implemented | `0xe8` / `0xfffffbff`, PLM-shaped |
 | `0x00409b78` | implemented | `0` |
@@ -389,6 +391,21 @@ The `0x409800` write lands because it sits under the fully open `0x4096d0` block
 the FECS PLM writes are silently dropped. The command protocol and the context
 path are in [privilege and rate control](../specs/02_privilege-and-rate-control.md) and
 the [FECS and GR context experiments](../experiments/03_fecs-and-gr-context.md).
+
+### FECS command mailbox
+
+The mailbox is under the fully open `0x4096d0` PLM, so the host (PL0) and GSP-RM
+(PL2) can both write it. The host writes the data to `0x409500` and the 12-bit
+command ID (`cmd & 0xfff`) to `0x409504`; a known command writes its ID to
+`0x409800` on completion. The ID read is blocked, so the completion slot is the
+only readback.
+The GSP-RM restores the slot to `1`.
+
+An unassigned ID is not rejected cleanly: the FECS raises a ucode fatal error
+(`Xid 13`) and the driver marks the GPU for reset (`Xid 154`). The plaintext
+command set has no selector, so the host mailbox is a PL0 DoS primitive, not a
+rate lever ([the host command
+record](../experiments/03_fecs-and-gr-context.md#0310-the-host-can-command-fecs-and-an-unknown-id-is-fatal)).
 
 ## SM and GR
 

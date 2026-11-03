@@ -472,6 +472,10 @@ pending release.
 - The FMC encryption mode and key remain unknown. The negative results cover the
   MD5-IV permutation family under the tested modes, not every AES mode or key
   source.
+- Whether the FMC ciphertext is image-wide or device-bound. The identical
+  ciphertext is within one image; no cross-card or cross-version comparison
+  exists ([the FMC
+  container](../experiments/07_plaintext-corpus.md#074-fmc-container-format-and-signature)).
 - The GSP-RM module map comes from local decompilation; this spec publishes maps
   and short excerpts, not bulk decompiled code.
 - No firmware image, container, or key is included in this repo.

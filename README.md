@@ -179,7 +179,7 @@ the experiment record with the commands and artifacts.
 |---|---|---|---|
 | Wrote the speed registers from the host window, from GSP firmware, and through the CUDA debugger class; tried the [fuse shadow](specs/03_register-map.md#fuse-and-otp) and the graphics engine's [rate register](specs/02_privilege-and-rate-control.md#the-rm-getter-and-the-host-view); read the falcon blocks | Success returned, writes dropped; the rate register is writable but reasserted and inert; the debugger class reads the bank but cannot write it; the FECS/GPCCS falcon blocks are absent, and the vBIOS ucode table has no consumer on GB202 | Dead, measured | [register writes](experiments/01_software-register-writes.md), [debugger class](experiments/10_debugger-class-and-fecs-ucode.md), [falcon probe](experiments/11_falcon-and-gr-window-probe.md) |
 | Used the driver's registry knobs (`RMOverrideSmSpeedSelect*`, `RMDisableFeatureDisablement`) | Parsed and stored, no rate or bank change | Dead, measured | [registry keys](experiments/02_registry-and-static-audit.md) |
-| Poked the GPU command ring ([FECS doorbell](specs/03_register-map.md#fecs) and [graphics engine context buffers](specs/03_register-map.md#sm-and-gr)) | Payloads are addresses and sizes, no selector field | Dead, measured/static | [FECS and context](experiments/03_fecs-and-gr-context.md) |
+| Poked the GPU command ring ([FECS doorbell](specs/03_register-map.md#fecs) and [graphics engine context buffers](specs/03_register-map.md#sm-and-gr)) | The host can issue commands; no selector in the known set; an unassigned ID fatal-errors the FECS | Dead, measured | [FECS and context](experiments/03_fecs-and-gr-context.md) |
 | Read firmware memory (GSP, FSP, and SEC2 local memory; [RISC-V debug engine](specs/06_gsp-riscv-and-priscv.md#priscv-register-map)) | Local memory empty or locked to PL3; the debug engine reads the 14.4 MB GSP-RM code segment after a halt, not secure memory or the WPR | Dead or diagnostic | [secure memory](experiments/04_hs-sec2-fsp-memory.md) |
 | Fed the boot firmware bad input (the host-built [boot descriptors](specs/01_boot-chain.md#wprmeta)) | Seventeen structured error codes, control over where firmware lands in VRAM, authentication enforced | Live input, mapped, no exploit | [boot inputs](experiments/05_fmc-fsp-boot-inputs.md), [parser map](experiments/09_fmc-cold-boot-parsers.md) |
 | Hooked suspend/resume (the host-built [descriptor and page table](specs/01_boot-chain.md#suspendresume)) | Page table is plaintext; saved state is encrypted per boot and card | Live structure, no exploit yet | [suspend/resume](experiments/06_sr-resume.md) |
@@ -197,22 +197,29 @@ files](experiments/).
 ## Where it stands
 
 The open leads, ranked by the decision each one buys, are in [Open
-leads](IDEAS.md). The short version: the FEAT readout and fuse target is
-validated ([the reference
-dump](experiments/08_assessment-and-cross-checks.md#0810-an-rtx-pro-6000-reference-dump));
-the `SS0`/`SS1` override format is still open. The public record reproduces the
-drop on GB202 and GB203M and names the missing primitive as PL3 code execution
-in the security firmware ([the external
+leads](IDEAS.md). The short version: the FEAT readout is validated ([the
+reference
+dump](experiments/08_assessment-and-cross-checks.md#0810-an-rtx-pro-6000-reference-dump)),
+and the `SS0`/`SS1` override is the prior-art mechanism, not an open format:
+the CMP 170HX and RTX 4090 open `FEAT_OVR_PLM` from PL3 code and write the
+selectors from the host, and the GB202 fuse that would close the path reads
+open ([the two override
+paths](specs/02_privilege-and-rate-control.md#the-two-override-paths)). The
+public record reproduces the drop on GB202 and GB203M and names the missing
+primitive as PL3 code execution in the security firmware ([the external
 cross-check](experiments/08_assessment-and-cross-checks.md#0811-the-register-route-is-a-pl3-problem)).
 The cold-boot FMC parser map is measured ([the parser
 group](experiments/09_fmc-cold-boot-parsers.md)): the boot inputs are bounded or
 exact, and the image bytes are authenticated. Next is the suspend/resume
 descriptor and page table, then the FSP framing. The vBIOS app `0x23` tail and
-the per-SM probes follow. The FECS/GPCCS read route is closed: the falcon blocks
+the per-SM probes follow. The information leads — the debugger command census,
+the timed port capture, the engine map, the RM census, cross-version diffing,
+and the crypto model — are in [Open
+leads](IDEAS.md#discovery-what-produces-new-information). The FECS/GPCCS read route is closed: the falcon blocks
 are absent at the documented bases, the GR window the GSP-RM admits is empty,
 and the space above it is the vBIOS ROM plus one per-card table. The vBIOS
 ucode table has no consumer in the open stack on GB202, and the RM boots GR
-through `sec2_acr` from RM memory ([the falcon
+through a single `sec2_acr` wait with no staging pointers ([the falcon
 probe](experiments/11_falcon-and-gr-window-probe.md), [the
 consumer](experiments/11_falcon-and-gr-window-probe.md#116-no-stack-component-reads-the-ucode-table)).
 
@@ -223,12 +230,18 @@ decode](experiments/12_feat-readout-decode.md)). And the firmware image is
 mapped as a container: about 18.5 MB of plaintext, then a 53.8 MB encrypted
 `rm.bindata.bin` that holds the engine ucode behind per-blob SEC2 key
 derivation, with plaintext load descriptors inside
-([the fwimage map](experiments/13_fwimage-map-and-bindata.md)). The decrypted
-FECS/GPCCS ucode transits RM memory at every boot, so a timed capture reads
-it without the key — the [staged-ucode
-capture](IDEAS.md#staged-ucode-capture) is the lead that settles whether FECS
-microcode or SM silicon enforces the cap, and with it whether any PL3 write
-can change the rate at all.
+([the fwimage map](experiments/13_fwimage-map-and-bindata.md)). The
+timed-capture lead that once followed is closed: the `sec2_acr` args are a
+timeout pair, not pointers, and the debug engine's read window covers the
+code segment only ([the transit
+record](experiments/13_fwimage-map-and-bindata.md#136-the-decrypted-ucode-transit-and-its-read-route),
+[the aperture](experiments/04_hs-sec2-fsp-memory.md#046-the-icd-aperture-is-the-code-segment)).
+The [FECS doorbell](IDEAS.md#host-fecs-doorbell) probe has now run: the host can
+issue commands from BAR0 and the completion echo lands, but the known command
+set has no selector and an unassigned ID fatal-errors the FECS ([the host
+command
+record](experiments/03_fecs-and-gr-context.md#0310-the-host-can-command-fecs-and-an-unknown-id-is-fatal)).
+The enforcement fork remains, but the cheap behavioral route is exhausted.
 
 The [RISC-V debug
 engine](experiments/04_hs-sec2-fsp-memory.md#044-priscv-icd-is-a-live-debug-port)
@@ -259,8 +272,11 @@ One measurement and one primitive were missing. I now have the measurement.
   ([the reference
   dump](experiments/08_assessment-and-cross-checks.md#0810-an-rtx-pro-6000-reference-dump)).
   That is what to aim for.
-- The missing primitive is code execution at PL3. That is how the selector gets
-  written. The dump gives the target; it does not unlock the card.
+- The missing primitive is code execution at PL3. The prior art needs it for
+  one write to `FEAT_OVR_PLM`; the selectors are host writes after that ([the
+  two override
+  paths](specs/02_privilege-and-rate-control.md#the-two-override-paths)). The
+  dump gives the target; it does not unlock the card.
 
 **What would count as an unlock:**
 

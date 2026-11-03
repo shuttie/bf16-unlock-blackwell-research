@@ -32,22 +32,29 @@
   security unit validates the image and hands encrypted blobs to SEC2, which
   derives per-blob keys and runs AES-ECB in High-Secure mode
   ([the secure-data unit](#134-the-fwsec-lic-secure-data-unit)).
-- The blob directory is real and partly readable. Sixty-six plaintext
-  headers sit inside the encrypted mass, each a falcon load descriptor with
-  ID words, a `0xff` magic, and `{start, end}` memory ranges
-  ([the blob directory](#135-the-generic-header-blob-directory)).
+- The blob directory is real but smaller than it first looked. Of the
+  sixty-six plaintext regions inside the encrypted mass, fourteen are falcon
+  load descriptors with a signature, ID words, a `0xff` magic, and
+  `{flag, start, end}` records, two are bare `{addr, size}` code loads at
+  `0xf900` — the GR-falcon shape — and the rest are app descriptors,
+  trailers, and permutation tables
+  ([the blob directory](#135-the-generic-header-blob-directory),
+  [the census](#138-the-blob-census-five-families)).
 
 **What it did not find.**
 
 - No FECS or GPCCS code in readable form. The ucode bodies stay encrypted;
-  only their load descriptors are plaintext.
+  only their load descriptors are plaintext, and the six low-entropy islands
+  once read as falcon code are permutation tables
+  ([the census](#138-the-blob-census-five-families)).
 - No absolute FEAT or fuse address in the entire file. Twenty-five
   `0x008238xx`/`0x008207xx`/`0x504204` probes return zero hits, in the
   plaintext code and the encrypted mass alike.
 - No software AES tables. The decryption runs on the hardware
   crypto-compression engine, so there is no key table to recover either.
-- No engine name for any of the 66 blobs. The ID words in the headers have
-  no public mapping yet.
+- No engine name for any of the blobs. The ID words in the A1 descriptors
+  are ucode identity — both copies of a pair carry the same words — but they
+  have no public mapping.
 
 ## Experiments
 
@@ -57,8 +64,10 @@
 | 13.2 | [The plaintext boundary](#132-the-plaintext-boundary) | 18.5 MB of 72.8 readable |
 | 13.3 | [bindata is encrypted, not compressed](#133-bindata-is-encrypted-not-compressed) | no plaintext, no codec |
 | 13.4 | [The FWSEC-LIC secure-data unit](#134-the-fwsec-lic-secure-data-unit) | SEC2 AES-ECB, HS mode |
-| 13.5 | [The generic-header blob directory](#135-the-generic-header-blob-directory) | 66 load descriptors |
-| 13.6 | [The decrypted ucode transits RM memory](#136-the-decrypted-ucode-transits-rm-memory) | live capture is the next run |
+| 13.5 | [The generic-header blob directory](#135-the-generic-header-blob-directory) | 66 regions, five families |
+| 13.6 | [The decrypted ucode transit and its read route](#136-the-decrypted-ucode-transit-and-its-read-route) | transit unproven, ICD read closed |
+| 13.7 | [The `sec2_acr` args are a timeout pair](#137-the-sec2_acr-args-are-a-timeout-pair) | 20 ms window, no pointers |
+| 13.8 | [The blob census: five families](#138-the-blob-census-five-families) | two `0xf900` GR candidates |
 
 ## 13.1 The libos manifest and the module chain
 
@@ -381,8 +390,12 @@ readable without the key?
   `0xf900` — a falcon ucode load map. Its body entropy is 7.95 immediately
   after the header.
 - Six islands (bindata offsets `0x2600f40` through `0x2890ac0`) are not
-  headers but structured halfword data with `0x40`-pattern words, the shape
-  of falcon code. Their extent and purpose are unclassified.
+  headers but structured halfword data with `0x40`-pattern words. I first
+  read them as falcon code; the census corrects that — they carry 16-value
+  bit-reversed index runs, the signature of permutation or FFT twiddle
+  tables, and they produce no hits under a code-shape detector that lights
+  up on real code
+  ([the census](#138-the-blob-census-five-families)).
 
 **Result.**
 
@@ -405,10 +418,10 @@ readable without the key?
   no public mapping, and identifying them needs either the load maps of a
   live boot or a key.
 
-## 13.6 The decrypted ucode transits RM memory
+## 13.6 The decrypted ucode transit and its read route
 
-**Question.** Does the plaintext FECS/GPCCS ucode exist in readable memory
-at some point on a live card?
+**Question.** Does the plaintext FECS/GPCCS ucode exist in host-readable
+memory at some point on a live card?
 
 **Why.**
 
@@ -419,45 +432,190 @@ at some point on a live card?
 
 **Method.**
 
-- Tools: no new run. This record correlates three existing results: the GR
-  boot log, the secure-data mechanism, and the debug-engine read window.
-- Steps: compare where SEC2 writes the decrypted bodies against the memory
-  the host and the debug engine can see.
+- Tools: the decoded boot logs, the corpus decompile of the wait function,
+  and the halted-core aperture scan
+  ([driver harness](../tools/driver-harness/)); no firmware was modified.
+- Steps: decode the two `sec2_acr` log lines that motivated the transit
+  claim, then measure every host read path that could reach a staging
+  buffer: the ICD over the halted core, the FB windows, and the falcon
+  ports.
 
 **Observed data.**
 
-- The boot capture shows the RM starting GR through `sec2_acr` with
-  RM-memory pointers, not through the vBIOS table
-  ([the consumer record](11_falcon-and-gr-window-probe.md#116-no-stack-component-reads-the-ucode-table)).
-- The secure-data unit hands SEC2 the blob and a destination; the
-  IMEM-to-DMEM copy error in the same unit's string family confirms the
-  staging goes through memory the RM addressed
-  ([the secure-data unit](#134-the-fwsec-lic-secure-data-unit)).
-- The PRISCV debug engine reads the RM code segment byte-exact after a
-  halt, which is the same memory class the staging buffers live in
-  ([the live ICD](04_hs-sec2-fsp-memory.md#044-priscv-icd-is-a-live-debug-port)).
+- The transit claim rested on the `sec2_acr` log args, read as RM-memory
+  pointers. They are a timeout pair — a 4-second deadline and the current
+  time — and the wait is a poll for a completion flag, not a load with
+  published pointers
+  ([the timeout pair](#137-the-sec2_acr-args-are-a-timeout-pair)). The
+  same misreading is corrected in the consumer record
+  ([11.6](11_falcon-and-gr-window-probe.md#116-no-stack-component-reads-the-ucode-table)).
+- The load is issued through a compressed-dispatch vtable slot in the boot
+  function `FUN_ram_0197f704` before the wait starts; no staging address
+  appears anywhere in the boot capture.
+- The halted-core ICD reads exactly the RM code segment
+  `0x01000000–0x01DCD000` and refuses everything else: the container's own
+  bindata, the data segment, the whole runtime range `0x90000000–0xA8000000`
+  at 1 MiB steps, and every WPR address
+  ([the aperture measurement](04_hs-sec2-fsp-memory.md#046-the-icd-aperture-is-the-code-segment)).
+- The FB windows return the access-denied fill over the WPR
+  ([host FB reads](../specs/07_memory-and-host-access.md#host-fb-reads-and-the-wpr)),
+  and the falcon ports are host-blocked
+  ([the falcon probe](11_falcon-and-gr-window-probe.md)).
 
 **Result.**
 
-- **Answer:** on every boot, SEC2 decrypts the engine ucode into RM-visible
-  memory before it lands in falcon IMEM. A timed read of that staging
-  buffer — a halt and dump through the debug engine during GR boot, or a
-  sampler armed around the `sec2_acr` window — captures the plaintext
-  FECS/GPCCS ucode with no key.
+- **Answer:** the transit through RM-visible memory is unproven; its only
+  positive evidence was the misread log pair. Every host read path tested so
+  far is shut: the ICD aperture, BAR1/PRAMIN, and the EMEM ports at steady
+  state. The boot-window port capture is a separate, unrun test ([the timed
+  port capture](../IDEAS.md#timed-emem-and-dmem-capture)).
 - **What we learned:**
-  - The capture does not need the bindata key. It needs a read at the right
-    moment, and the existing tools are built for reads of that memory.
-  - If the captured FECS code reads the FEAT bank, the whole PL3 program is
-    validated and the capture also names the exact words a PL3 write must
-    set. If it does not, the enforcement is silicon and no firmware route
-    exists — the honest stopping condition.
+  - The enforcement fork stays open, but its answer has to be behavioral
+    or PL3, not a code capture through the ICD: the [FECS doorbell
+    probe](../IDEAS.md#host-fecs-doorbell) tests whether a FECS command
+    can move the rate without reading any ucode.
+  - The GC6 re-execution of the decrypt
+    ([the secure-data unit](#134-the-fwsec-lic-secure-data-unit)) stands,
+    so a future read primitive — if one appears — can trigger the window
+    on demand rather than at cold boot.
 - **Related:**
+  - [The aperture measurement](04_hs-sec2-fsp-memory.md#046-the-icd-aperture-is-the-code-segment)
+    closes the ICD read and write paths.
   - [The staged-ucode capture](../IDEAS.md#staged-ucode-capture) is the
-    lead this record opened.
-  - [The live ICD](04_hs-sec2-fsp-memory.md#044-priscv-icd-is-a-live-debug-port)
-    is the read primitive.
+    rewritten lead entry.
+  - [The blob census](#138-the-blob-census-five-families) names the two
+    `0xf900` blobs a working capture would have targeted.
+- **Open question:** whether the GSP EMEM, SEC2 DMEM, or FSP EMEM ports carry
+  plaintext during the FMC or ACR window. They were sampled only with the
+  driver bound ([the timed port
+  capture](../IDEAS.md#timed-emem-and-dmem-capture)).
+
+## 13.7 The `sec2_acr` args are a timeout pair
+
+**Question.** What do the two `sec2_acr` log lines' arguments actually
+carry?
+
+**Why.**
+
+- The boot capture's `sec2_acr` entries were read as RM-memory pointers and
+  became the evidence that GR boots through SEC2 with a published staging
+  buffer. If the args are times, that reading falls.
+- What it would give: the true shape of the RM-side ACR wait, and the real
+  width of the decrypt window.
+
+**Method.**
+
+- Tools: the Ghidra project over the extracted image
+  ([GSP-RM tools](../tools/gsp-rm-tools/)) and the three decoded boot
+  captures; offline.
+- Steps: decompile the function behind the log IDs `0x204d9558` and
+  `0x204d95b8`, read the two log calls and the timeout builder, then check
+  the arg arithmetic across all three captures.
+
+**Observed data.**
+
+- `FUN_ram_0197ee20` is a wait-for-completion: it builds a timeout
+  descriptor with `FUN_ram_01593570` (`time + 0x20 + timeout_ns`, a
+  4-second default), logs `(deadline, now)` as `0x204d9558` at entry,
+  polls a completion flag at falcon-state `+0x443` while servicing the
+  SEC2 command queue (engine tag `0x2f`), and logs `(time)` as `0x204d95b8`
+  when the flag is observed.
+- The arithmetic agrees on every capture: `deadline − now` is
+  `0xEE6B2820` (4.000000032 s) on both cards and `0xEE6B2800` on the
+  verbose capture; the wait lasts 19.62 ms, 19.63 ms, and 20.27 ms.
+- The caller `FUN_ram_0197f704` logs `0x204d97c8` immediately before the
+  wait, the first post-boot `gr_fecs` line follows ~50 ms after
+  completion, and one wait pair appears per GR boot.
+
+**Result.**
+
+- **Answer:** the args are a deadline and a clock, not pointers. The ACR
+  decrypt-and-load window is ~20 ms wide, bracketed by two watchable log
+  lines, and re-runs on every GC6 cycle — but nothing in the log names a
+  staging buffer.
+- **What we learned:**
+  - Two records carried the pointer reading: this group's transit argument
+    and the consumer record's "RM-memory pointers". Both are corrected;
+    the surviving fact is that the RM waits on SEC2's ACR completion.
+  - A userspace halt armed on the first `sec2_acr` line would have ~20 ms
+    of budget — the timing was sound; the read side is what failed
+    ([the aperture measurement](04_hs-sec2-fsp-memory.md#046-the-icd-aperture-is-the-code-segment)).
+- **Related:**
   - [The boot log capture](08_assessment-and-cross-checks.md#088-live-gsp-log-capture-and-decode)
-    times the `sec2_acr` window.
-- **Open question:** the staging buffer's lifetime. The window is between
-  SEC2's decrypt and the falcon's IMEM load, and its width is unknown until
-  the first capture run.
+    produced the three captures the arithmetic uses.
+  - [The transit record](#136-the-decrypted-ucode-transit-and-its-read-route)
+    is the corrected lead.
+- **Open question:** none.
+
+## 13.8 The blob census: five families
+
+**Question.** What are the sixty-six structured regions inside
+`rm.bindata.bin`, and can the GR falcon pair be identified offline?
+
+**Why.**
+
+- The directory record called all sixty-six load descriptors and read the
+  six islands as falcon code. A wrong census sends a capture after the
+  wrong shapes — and if any blob were stored unencrypted, the whole key
+  question would change.
+- What it would give: the true blob inventory, the FECS/GPCCS candidates
+  by load-map shape, and a dump matcher ready for any future read
+  primitive.
+
+**Method.**
+
+- Tools: a window scan reproducing the directory record, a word dump of
+  every region, a direct `0xff`-word scan for descriptor parsing, a
+  bit-reversed-run test for the islands, and a dump matcher with tag,
+  ciphertext-anchor, and code-shape detectors; offline.
+- Steps: classify each region by its signature constants; group the
+  descriptor blobs by identical record lists; validate the matcher on a
+  synthetic dump with planted artifacts and on the image itself.
+
+**Observed data.**
+
+- Five families. Fourteen descriptors carry the signature
+  `ed300700 ee703000 ce300300`, a record count, two ID words, the `0xff`
+  magic, and `{flag, start, end}` records — seven distinct ucode, each
+  stored twice with identical records and IDs (pairs like `0x990048` and
+  `0x9ba048`, IDs `0x4900,0x6d00`).
+- Two blobs hold bare `{addr, size}` records with no signature:
+  `0x2fa7178` lists `{0, 0x600} {0xf900, 0xba00}` and `0x30aed48` lists
+  `{0, 0x400} {0xf900, 0xbe00}`, each twice — 47.6 and 48.6 KiB code
+  images at the same engine-memory base.
+- The remaining regions are three-to-five app descriptors (tag
+  `60606263 46620160 90a26628` plus engine-ID lists), twelve trailers
+  (recurring `9f35f43d 0149fe04 bf1c9990` blocks with per-blob size
+  words), and the six islands.
+- The islands carry 16-value bit-reversed index runs in their low halfword
+  bytes (`5,9,3,d,7,b,f,0,4,8,2,c,6,a,1,e` and rotations) — permutation or
+  twiddle tables. They also return zero hits from the code-shape detector,
+  which lights up over 1.4 MB of the plaintext region and nothing else.
+- The matcher self-test finds five planted artifacts in a 16 MiB synthetic
+  dump with zero false code windows on random fill; on the image it
+  recovers the fourteen descriptor signatures, four `0xf900` markers, and
+  sixteen 128-byte ciphertext anchors, all at census offsets.
+
+**Result.**
+
+- **Answer:** the directory is five families, not sixty-six descriptors;
+  the two `0xf900` blobs are the GR-falcon shape — different code, same
+  layout, similar magnitude, which is what FECS and GPCCS should look
+  like — and no plaintext engine code exists anywhere in the blob.
+- **What we learned:**
+  - The `RMForceNvdecUcodeEncryption` hint that per-ucode encryption is
+    configured loses its only unencrypted candidate: the islands were that
+    candidate, and they are tables.
+  - The identical descriptor pairs are two falcon instances sharing one
+    ucode — engine pairs like the decoder or encoder falcons — so they
+    cannot be the GR pair, whose two falcons run different code.
+  - The matcher's ciphertext anchors locate any blob's encrypted copy in a
+    future dump with no address assumptions; they are the tool a new read
+    primitive should be handed first.
+- **Related:**
+  - [The blob directory](#135-the-generic-header-blob-directory) is the
+    record this census corrects.
+  - [The transit record](#136-the-decrypted-ucode-transit-and-its-read-route)
+    names these two blobs as the capture targets.
+- **Open question:** which of the two `0xf900` blobs is FECS and which is
+  GPCCS. Settling it needs either the ID-word mapping or the code itself.

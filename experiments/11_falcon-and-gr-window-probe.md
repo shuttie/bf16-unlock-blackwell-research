@@ -18,9 +18,9 @@
 - GSP, SEC2, and FSP answer at their documented falcon bases. Their boot and
   vector registers return the "blocked" markers, not data
   ([the falcon blocks](#111-the-falcon-blocks-answer-or-refuse)).
-- The PMU, FECS, and GPCCS bases return decode or not-implemented markers. The
-  FECS-adjacent registers at `0x409b00` still answer, and `0x409b7c` carries a
-  PLM-shaped word
+- At the documented bases, the PMU, FECS, and GPCCS registers return decode or
+  not-implemented markers. The FECS-adjacent registers at `0x409b00` still
+  answer, and `0x409b7c` carries a PLM-shaped word
   ([the same record](#111-the-falcon-blocks-answer-or-refuse)).
 - The GR window the GSP-RM admits (`0x140000`–`0x17ffff`) is empty except a
   `0x100`-byte header at its base
@@ -36,7 +36,7 @@
   table](#115-the-0x1f2000-block-is-a-per-card-table)).
 - No component in the open stack reads the vBIOS ucode table on GB202. The
   host FWSEC path is short-circuited before it opens the image, and the RM
-  boots GR through `sec2_acr` from RM memory
+  boots GR through a single `sec2_acr` wait with no staging pointers
   ([the consumer](#116-no-stack-component-reads-the-ucode-table)).
 
 **What it did not find.**
@@ -505,8 +505,9 @@ rings  init 0x100000  intr 0x40000  rm 0x100000  mnoc 0x10000
   in 23,016 functions.
 - The boot capture returns 197 records: INIT 64, RM 99, KERNEL 27, INTR 2,
   ROOT 3, RMON 2. The GR path is `gr_fecs` at +20, +226, and +387 ms,
-  `sec2_acr` at +387 and +408 ms with RM-memory pointers, and the known
-  `0x137200` refusal at +505 ms.
+  `sec2_acr` at +387 and +408 ms — the args are a 4-second timeout pair,
+  not pointers ([the decode](13_fwimage-map-and-bindata.md#137-the-sec2_acr-args-are-a-timeout-pair)) —
+  and the known `0x137200` refusal at +505 ms.
 - I found no record that references a table offset, one of the four app/target
   pairs, or a ucode load. The `0xe` and `0x3` arguments in the timeout sweep are
   slot indices, not engine IDs.
@@ -517,8 +518,9 @@ rings  init 0x100000  intr 0x40000  rm 0x100000  mnoc 0x10000
   four bodies are not GR ucode here.
 - **What we learned:**
   - The host FWSEC path is gated by chip and never runs on GB20x.
-  - The RM boots GR through `sec2_acr` from RM memory, not through the vBIOS
-    table.
+  - The RM waits on a `sec2_acr` completion for the GR boot — one wait pair
+    per boot, ~20 ms wide — and publishes no staging pointers
+    ([the decode](13_fwimage-map-and-bindata.md#137-the-sec2_acr-args-are-a-timeout-pair)).
   - What consumes apps `0x07`, `0x19`, `0x15`, and `0x23` is outside this
     stack.
 - **Related:**

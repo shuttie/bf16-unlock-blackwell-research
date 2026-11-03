@@ -41,6 +41,7 @@
   levels, the mask, and the FLR window.
 - [The selector chain](#the-selector-chain): fuse to SM issue rate.
   - [Fuses](#fuses)
+  - [The two override paths](#the-two-override-paths)
   - [FEAT bank](#feat-bank)
   - [Selector encoding](#selector-encoding)
 - [The RM getter and the host view](#the-rm-getter-and-the-host-view): what the
@@ -137,10 +138,17 @@ The PLM is not static across resets:
 
 The FLR window is real but short. A direct BAR0 poller [measures the
 re-lock](../experiments/01_software-register-writes.md#016-the-post-reset-window-closes-before-gsp-rm)
-at 1156–1323 ms after the FLR; the first GSP-RM program counter appears at 3176
-ms. The re-lock therefore lands about 1.85 s before the only PL2 master exists.
-An early open does not help: the open→GSP-RM path is about 2.1 s, longer than
-the 1.32 s window. The [re-lock is a GPU-side
+at 1156–1353 ms after the FLR; the first GSP-RM program counter appears at
+3174–3176 ms. The re-lock therefore lands about 1.82–1.85 s before the only PL2
+master exists. An early open does not help: the open→GSP-RM path is about 2.1 s,
+longer than the 1.35 s window. The same poll sees no FSP core, scratch, engine,
+or PLM movement, so the writer is the PMU or a hardware latch on the visible
+registers. Only `FUSE_SS_PLM` (`0x8200fc`) moves with the bank: it takes the
+FLR's `0x80842bcf`, the same value as the FEAT PLM, and re-locks to `0xfffffbff`
+at the same instant; the FEAT PLM re-locks to `0xfffffb8f`. It is not a second
+gate ([the re-lock
+record](../experiments/01_software-register-writes.md#019-the-re-lock-moves-fuse_ss_plm-and-no-fsp-register)).
+The [re-lock is a GPU-side
 devinit](../experiments/05_fmc-fsp-boot-inputs.md#0521-plm-re-lock-is-autonomous-devinit),
 not the FMC or GSP-RM.
 
@@ -186,6 +194,23 @@ not the effective gate: writes to `0x82074c` and `0x8207d8` stay unchanged from
 both PL0 and PL2. See [the FUSE write
 test](../experiments/01_software-register-writes.md#014-the-fuse-shadow-and-the-inert-modifier).
 
+### The two override paths
+
+Two fuses are usually read together, and they gate different things.
+
+- `FUSE_FEAT_OVR_DIS` (`0x8203f0`) is the master kill for the feature
+  overrides, the speed selectors included. It reads `0` on every measured part,
+  Ampere and GB202 alike, so the path is available and the
+  [PLM](#privilege-levels-and-the-plm) is the only gate in front of it.
+- `FUSE_EN_SW_OVERRIDE` (`0x820040`) gates the CTRL_OPT floorsweep override:
+  SM count, memory geometry, and the PCIe link. It reads `0` on the A100, the
+  CMP 170HX, and every measured GB202 card; a throttled part with the same
+  reading still reaches full rate by writing its speed selectors.
+
+A `0` on `FUSE_EN_SW_OVERRIDE` is therefore not evidence that `SS0`/`SS1` are
+fused off. The CMP 170HX and RTX 4090 both unlock with it at `0` ([the external
+cross-check](../experiments/08_assessment-and-cross-checks.md#085-external-cross-part-register-corpus)).
+
 ### FEAT bank
 
 | Offset | Name | Stock | Role |
@@ -213,7 +238,10 @@ identifies it.
 `SS0` holds eight 4-bit fields; `SS1` holds the ninth in `[3:0]`. Each field uses
 bit 3 as the override enable and bits 2:0 as the selector. The Ada/Ampere
 encoding is `0` = full rate, `1` = 1/2, `2` = 1/4, `3` = 1/8; the unlock payload
-was `SS0 = 0x88888888`, `SS1 = 0x8`.
+was `SS0 = 0x88888888`, `SS1 = 0x8`. Writing that payload from PL2 is dropped,
+like the zero write; it is only testable after a PL3 write opens the gate
+([the payload
+test](../experiments/01_software-register-writes.md#0110-the-exact-override-payload-is-dropped-from-pl2)).
 
 At stock every enable bit is clear, so the fused selectors are in force. The
 non-zero stock words are pre-driver shadow state. They vary across cold boots
@@ -291,7 +319,8 @@ the host driver or GSP-RM. [The FUSE/rate
 test](../experiments/01_software-register-writes.md#014-the-fuse-shadow-and-the-inert-modifier)
 shows the register is writable and reasserted; [the static
 pass](../experiments/08_assessment-and-cross-checks.md#087-static-pass-over-feat-and-fsp)
-finds no RM writer.
+finds no RM writer by literal reference. The computed-offset forms are still
+unrun ([the static audit](../experiments/02_registry-and-static-audit.md#021-static-scan-finds-no-rate-register-reference)).
 
 The host driver is telemetry, not a lever. It fetches the nine selectors at GR
 init and caches them; its only FEAT-bank access is the `0x823814` ECC readout.
@@ -359,13 +388,15 @@ decode](../experiments/01_software-register-writes.md#015-the-permission-mask-ad
 - Two PRO 6000s read `FEAT_READOUT_1 = 0` with every arithmetic speed fuse at 0,
   and one card's FP32-accumulate rate equals its FP16-accumulate rate
   ([the reference dump](../experiments/08_assessment-and-cross-checks.md#0810-an-rtx-pro-6000-reference-dump)).
-- The override-enable fuses read the A100/170HX pattern on every measured
-  GB202 card — two 5090s, two PRO 6000s — so the software-override path is
-  not fuse-enabled on this generation
+- The speed-selector override is open at the fuse level on GB202:
+  `FUSE_FEAT_OVR_DIS` reads `0` on every measured part — two 5090s, two PRO
+  6000s — and only the [PLM](#privilege-levels-and-the-plm) gates it
   ([the debugger
   group](../experiments/10_debugger-class-and-fecs-ucode.md#102-the-context-and-descriptor-spaces-read),
   [the reference
   dump](../experiments/08_assessment-and-cross-checks.md#0810-an-rtx-pro-6000-reference-dump)).
+  `FUSE_EN_SW_OVERRIDE` also reads `0`, but it gates the CTRL_OPT floorsweep
+  override, not this one ([the two override paths](#the-two-override-paths)).
 - Every RM consumer of `FEAT_READOUT_0` and `FEAT_READOUT_2` decodes ECC
   capability flags, all clear on the measured cards; no rate or
   override-enable bit is read from either register, and the bits that differ
@@ -377,21 +408,23 @@ decode](../experiments/01_software-register-writes.md#015-the-permission-mask-ad
 
 - The nonzero readout→rate mapping. The zero endpoint is measured; `FMLA32 = 3`
   with a ~2× penalty is not the Ada law.
-- The pre-lock FEAT writer. The timing points to a GPU-side devinit, most likely
-  the PMU, but the FSP/BootROM or a hardware re-latch are not excluded.
+- The pre-lock FEAT writer. The timing points to a GPU-side devinit. The FLR
+  poll sees no FSP register activity, leaving the PMU or a hardware latch
+  ([the re-lock
+  record](../experiments/01_software-register-writes.md#019-the-re-lock-moves-fuse_ss_plm-and-no-fsp-register)).
 - The per-SM selector. Only the global FEAT bank was probed; per-SM copies could
   have a different gate. [The per-context
   probe](../experiments/01_software-register-writes.md#017-per-context-registers-need-a-caller-owned-channel)
   reached the typed register space but needed a caller-owned RM channel.
 - The Ada persistence model. On GB202 an FLR resets the PLM and the devinit
   re-locks it; the override does not stay open across reset.
-- The Blackwell semantics of the override-enable fuse words. The values are
-  measured, but the field meanings are the Ampere mapping carried over;
-  `0x82038c` reads `2` against Ampere's `1`.
-- Whether a PL3 write would change the Blackwell rate. The PRO 6000 full-rate
-  state is all-zero fuses with every override-enable bit clear, so the override
-  payload is still unvalidated ([the reference
-  dump](../experiments/08_assessment-and-cross-checks.md#0810-an-rtx-pro-6000-reference-dump)).
+- The on-die meaning of `SECURE_FEAT_OVR_QUADRO_WR_SEC`. The values are
+  measured — `2` on GB202 against Ampere's `1` — but the field mapping is the
+  public Ampere one carried over.
+- Whether a Blackwell `SS0`/`SS1` write changes the rate. The prior art runs
+  the same sequence on parts whose `FUSE_EN_SW_OVERRIDE` also reads `0`
+  ([the two override paths](#the-two-override-paths)); the local measurement
+  needs a PL3 write to [`FEAT_OVR_PLM`](#write-gate).
 
 ## What would count as an unlock
 

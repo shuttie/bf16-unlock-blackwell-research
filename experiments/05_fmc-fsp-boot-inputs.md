@@ -34,7 +34,8 @@
   downward](#0513-heap-size-request-honoured-downward); a
   [16 MiB request wedges](#0514-16-mib-heap-request-wedges-the-boot).
 - The [FEAT](../specs/03_register-map.md#feat-bank) bank is [final before the FMC](#0517-feat-bank-final-before-the-fmc);
-  the [re-lock is GPU-side devinit](#0521-plm-re-lock-is-autonomous-devinit).
+  the [re-lock is GPU-side devinit](#0521-plm-re-lock-is-autonomous-devinit),
+  with no FSP register activity at the transition.
 - The [vBIOS](../specs/05_vbios-and-devinit.md#where-it-sits) [plaintext tables carry no FEAT
   address](#0522-vbios-devinit-table-scan), and the devinit tables are
   authenticated.
@@ -1143,14 +1144,20 @@ change at any point. The module-load control (before the unbind) was already
   - The COT, the FMC, and GSP-RM do not do the re-lock.
   - The host is [PL0](../specs/02_privilege-and-rate-control.md) and neither PLM value admits L0 writes.
   - The writer is a GPU-side master acting on the enabled function, using the
-    reset mask's L2 permission. PMU devinit is the leading candidate (PL2); the
-    FSP/BootROM (PL3) or a hardware re-latch are not excluded.
+    reset mask's L2 permission. PMU devinit is the leading candidate (PL2). The
+    [FLR poll](../experiments/01_software-register-writes.md#019-the-re-lock-moves-fuse_ss_plm-and-no-fsp-register)
+    sees no FSP core, scratch, engine, or PLM movement at the re-lock, so the
+    FSP is excluded on the visible registers; the PMU or a hardware latch
+    remains.
 - **Related:**
   - The [boot-to-boot test](#0520-feat-bank-across-boots-and-flr) separates the
     SS domain.
   - The [vBIOS scan](#0522-vbios-devinit-table-scan) closes the plaintext-table
     route.
 - **Open question:** the exact devinit that performs the re-lock is not named.
+  The [FLR poll](../experiments/01_software-register-writes.md#019-the-re-lock-moves-fuse_ss_plm-and-no-fsp-register)
+  leaves the PMU or a hardware latch; [engine-map
+  completion](../IDEAS.md#engine-map-completion) is where the actor is named.
 
 ## 05.22 vBIOS devinit table scan
 

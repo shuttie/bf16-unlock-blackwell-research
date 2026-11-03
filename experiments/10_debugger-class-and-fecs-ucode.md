@@ -235,12 +235,14 @@ refused, and the record pairs it with `0x14252215`
   - `0x137200` is a privilege-protected FECS/GR register, not a FEAT word. It
     reads `0xc120048a`; the FECS log pairs it with `0x14252215` and the refusal
     `0xbadf5128`.
-  - The override-enable fuse reads above carry the cross-part reading: the
-    5090 shares the PRO 6000's A100/170HX pattern
+  - The `FUSE_EN_SW_OVERRIDE` reads above carry the cross-part reading: the 5090
+    shares the PRO 6000's A100/170HX pattern
     ([the cross-part corpus](../experiments/08_assessment-and-cross-checks.md#085-external-cross-part-register-corpus),
-    [the reference dump](../experiments/08_assessment-and-cross-checks.md#0810-an-rtx-pro-6000-reference-dump)),
-    so the software-override path is not fuse-enabled on either product class
-    of this die.
+    [the reference dump](../experiments/08_assessment-and-cross-checks.md#0810-an-rtx-pro-6000-reference-dump)).
+    That fuse gates the CTRL_OPT floorsweep override, not `SS0`/`SS1` ([the two
+    override paths](../specs/02_privilege-and-rate-control.md#the-two-override-paths));
+    the selector override's own kill fuse, `FUSE_FEAT_OVR_DIS`, reads `0` on
+    both product classes.
 - **Related:**
   - [The per-context
     rejection](../experiments/01_software-register-writes.md#017-per-context-registers-need-a-caller-owned-channel).

@@ -158,6 +158,11 @@ Filesystems sync: 0.039 seconds
 No later line was flushed. The kernel never resumed, so there is no post-freeze
 dmesg.
 
+The same oracle's revision variants (`0`, `1`, and `3`, field 2) also leave the
+pre-suspend marker and no post-resume marker; the stock revision is `2`. Those
+runs used the disk phase markers and did not capture the override's dmesg line,
+so the hang is evidenced by the missing post-resume marker rather than a log.
+
 **Result.**
 
 - **Answer:** the machine enters suspend and does not return. The stock cycle
@@ -165,6 +170,8 @@ dmesg.
   magic. The failure is a hang, not a structured error.
 - **What we learned:**
   - The FMC/SR code consumes `SRMeta.magic`; a wrong value prevents resume.
+  - The revision field is an exact check as well; the size, pointer, flags, and
+    radix3 delta remain untested.
   - The failure leaves no host-visible log: journald freezes before post-freeze
     printk flushes.
   - Probing non-stock descriptors needs netconsole, serial, or phase markers
