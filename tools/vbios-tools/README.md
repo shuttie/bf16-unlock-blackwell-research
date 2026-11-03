@@ -111,8 +111,8 @@ pointer is already image-relative.
   sentinel](../../specs/05_vbios-and-devinit.md#where-it-sits) from `0x138000` to
   `0x200000`.
 - The vBIOS image on this board starts at BAR0 + `0x338000`, not at the aperture
-  base. The `0x338000` head is 99.66% identical between the two cards; 790 bytes
-  differ, mostly board metadata.
+  base. The head before it (`0x300000`–`0x338000`, the `0x38000` head) is 99.66%
+  identical between the two cards; 790 bytes differ, mostly board metadata.
 - No firmware or ROM dump ships with this repository.
 
 ## Example output

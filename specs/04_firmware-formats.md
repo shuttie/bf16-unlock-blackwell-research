@@ -17,8 +17,14 @@
 - The FMC is a `0x48`-byte plaintext header plus an encrypted body; the body is
   code + data + a `0xA00` manifest, signed with P-384/SHA-384.
 - `GspRmBoot` is a raw encrypted 290,816-byte blob with no plaintext header.
-- The GSP-RM is a 72.8 MB RISC-V ELF with a plaintext `.fwimage` and per-chip
-  signature sections.
+- The GSP-RM image is a libos container: a manifest at file `0x6cff00` lists
+  ten modules, about 18.5 MB of plaintext (the RM ELF, six per-chip kernels,
+  two helper ELFs), and a 53.8 MB encrypted `rm.bindata.bin` that carries the
+  engine ucode
+  ([the manifest](../experiments/13_fwimage-map-and-bindata.md#131-the-libos-manifest-and-the-module-chain)).
+- The bindata blobs are AES-encrypted by SEC2 in High-Secure mode with
+  per-blob derived keys; each blob keeps a plaintext load descriptor
+  ([the secure-data unit](../experiments/13_fwimage-map-and-bindata.md#134-the-fwsec-lic-secure-data-unit)).
 - The FMC container is bound to the COT hash; a one-byte change draws `0x33`.
 - The FMC encryption mode and key remain unknown. The published MD5-IV key
   family is exhausted on GB202 under the tested modes.
@@ -34,8 +40,10 @@
 - [Signature envelope](#signature-envelope)
 - [GspRmBoot](#gsprmboot)
 - [GSP-RM image](#gsp-rm-image)
+  - [Container layout](#container-layout)
   - [Address model](#address-model)
   - [Signed-image boundary](#signed-image-boundary)
+  - [Secure-data blobs](#secure-data-blobs)
   - [Module map](#module-map)
 - [Firmware inventory](#firmware-inventory)
 - [FMC encryption and key search](#fmc-encryption-and-key-search)
@@ -216,27 +224,62 @@ buffer](../experiments/05_fmc-fsp-boot-inputs.md#0524-bootloader-buffer-not-decr
 
 ## GSP-RM image
 
-The GSP-RM is the main GPU firmware. It is a 72,830,976-byte RISC-V ELF with a
-large plaintext `.fwimage` and per-chip signature sections. The same image is
-shared across GA10x, AD10x, and GB20x; Blackwell behavior is selected by chip
-tables inside the image. The driver package and the local image show this; see
-[the PL3 component
+The GSP-RM is the main GPU firmware. The 72,830,976-byte `.fwimage` is a libos
+container, not one flat ELF: a plaintext manifest lists ten modules, about
+18.5 MB of the file is plaintext code and data, and a 53.8 MB encrypted
+`rm.bindata.bin` carries the engine ucode
+([the manifest](../experiments/13_fwimage-map-and-bindata.md#131-the-libos-manifest-and-the-module-chain)).
+The same image is shared across GA10x, AD10x, and GB20x; the kernel list
+(`kernel_ga10x` through `kernel_gb20y`) selects per chip. The driver package
+and the local image show this; see [the PL3 component
 inventory](../experiments/07_plaintext-corpus.md#071-pl3-components-in-the-driver-package).
+
+### Container layout
+
+The manifest sits at file `0x6cff00`–`0x6d8xx`, and its offsets are counted
+from a `0x6d000` base. Each entry names the module and lists its sections —
+vaddr, file offset, alignment, size — matching the ELF program headers for
+`rm.elf`. The modules pack contiguously, and every boundary below is verified
+by an ELF magic or an entropy boundary at the computed offset
+([the manifest](../experiments/13_fwimage-map-and-bindata.md#131-the-libos-manifest-and-the-module-chain)).
+
+| Region (file) | Module | State |
+|---|---|---|
+| `0x0`–`0x6d000` | bootstrap | plaintext |
+| `0x6e000`–`0x18f000` | six per-chip kernels (`kernel_ga10x.elf`, `kernel_gh100.elf`, `kernel_gb10x.elf`, `kernel_gb10y.elf`, `kernel_gb20x.elf`, `kernel_gb20y.elf`) | plaintext |
+| `0x18f000`–`0x10fe000` | `rm.elf`: code, data, TLS | plaintext |
+| `0x10fe000`–`0x11b9000` | `vgpu.elf` | plaintext |
+| `0x11b9000`–`0x11c8000` | `mnoc.elf` | plaintext |
+| `0x11c8000`–`0x4508000` | `rm.bindata.bin` (`0x33ad000` B) | encrypted |
+| `0x4508000`–`0x4570000` | per-chip signature sections | opaque |
+
+The 936 corpus "functions" above file offset `0x11d0000` are disassembler
+artifacts over encrypted bytes; the decompiled corpus covers the plaintext
+region and nothing else
+([the plaintext boundary](../experiments/13_fwimage-map-and-bindata.md#132-the-plaintext-boundary)).
 
 ### Address model
 
 ```text
 .fwimage file                 72,830,976 B
-wrapper before the loaded ELF 0x18F000 B
+manifest                      file 0x6cff00, offsets from base 0x6d000
 ELF64 at file offset          0x18F000
-code                          vaddr 0x01000000, filesz 0xDCD000, RX
-data                          vaddr 0x04000000, filesz 0x1A1000, RW
+code                          ELF-relative 0x0, vaddr 0x01000000, filesz 0xDCD000, RX
+data                          ELF-relative 0xDCD000, vaddr 0x04000000, filesz 0x1A1000, RW
+TLS                           ELF-relative 0xF6E000, vaddr 0x20393000, memsz 0x1000
 entry                         0x01A0F3DA
 loaded at core address        0x01000000
 runtime VA                    link VA + 0x92000000
-file offset                   link VA - 0x00E71000
 Ghidra VA                     link VA + 0x18F000
 ```
+
+File offsets come from the program headers (ELF base plus the
+ELF-relative offset), not from a link-VA subtraction. The earlier
+`file offset = link VA − 0x00E71000` relation holds only inside the code
+segment, where the ELF-relative offset is zero; it is wrong for the data
+segment and for every other module. The manifest offsets above are the
+authoritative cross-check
+([the manifest](../experiments/13_fwimage-map-and-bindata.md#131-the-libos-manifest-and-the-module-chain)).
 
 The loaded image is not identity-mapped at host framebuffer physical address
 `0x01000000`; that address reads zero. The backing is in the write-protected
@@ -255,6 +298,33 @@ A four-byte change at the entry of the FEAT readout decoder is enough. The
 per-chip signature section carries no host key, so there is no key-substitution
 target in the image. See [the patched-image
 test](../experiments/05_fmc-fsp-boot-inputs.md#052-patched-gsp-rm-image-rejected-by-the-fmc).
+
+### Secure-data blobs
+
+`rm.bindata.bin` carries the engine ucode. It is a sequence of secure-data
+blobs — there is no central directory — and each blob is a plaintext generic
+header plus an AES-encrypted body. The format is named by its error strings,
+and the decryption runs on SEC2: the RM-side firmware-security unit validates
+the image and hands each blob over, SEC2 derives the per-blob key and runs
+AES-ECB in High-Secure mode, and the RM never holds the key
+([the secure-data unit](../experiments/13_fwimage-map-and-bindata.md#134-the-fwsec-lic-secure-data-unit)).
+
+The generic header holds:
+
+| Field | Meaning |
+|---|---|
+| ID words | per-blob identity; e.g. `0x49`, `0x6d` on two twin headers |
+| `0xff` magic | record separator |
+| `{flag, start, end}` records | falcon load descriptors: where the decrypted body lands in engine memory |
+
+Sixty-six headers survive a structured-window scan of the blob; one at
+bindata offset `0x30aed40` maps a `0x400`-byte data segment and a
+`0xbe00`-byte code image loaded at `0xf900` — a falcon ucode load map
+([the blob directory](../experiments/13_fwimage-map-and-bindata.md#135-the-generic-header-blob-directory)).
+The ID words have no public mapping, so blob-to-engine assignment is open.
+The headers, and one structured block at `0x3cbc000`, are the known-plaintext
+surface for any future key search
+([the encryption](../experiments/13_fwimage-map-and-bindata.md#133-bindata-is-encrypted-not-compressed)).
 
 ### Module map
 
@@ -295,7 +365,8 @@ inside the initializer. Absence of a literal is not evidence of dead code.
 
 | Artifact | Size | Format / measurement |
 |---|---:|---|
-| GSP-RM image | 72,830,976 B | RISC-V ELF, base `0x01000000`; `.fwimage` plaintext |
+| GSP-RM image | 72,830,976 B | libos container: manifest at `0x6cff00`, ten modules, ~18.5 MB plaintext |
+| `rm.bindata.bin` | 54,185,984 B | inside the GSP-RM image at file `0x11c8000`; 66 secure-data blobs, AES-encrypted bodies with plaintext load descriptors |
 | FMC bootloader (linux-firmware) | 200,812 B | `0x10de` container, version 1; entropy 7.990 |
 | FMC image (linux-firmware) | 199,820 B | ELF32; body `0x30A00` = `0x25800` + `0xA800` + `0xA00`; entropy 7.999; signature verifies |
 | GspRmBoot production | 290,816 B | raw encrypted, no plaintext header, entropy 7.999 |

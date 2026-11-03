@@ -73,6 +73,8 @@ fi
     || { echo "missing tree sources" >&2; exit 1; }
 [ -f "$MODDIR/nvidia.ko" ] \
     || { echo "missing $MODDIR/nvidia.ko (build the tree first)" >&2; exit 1; }
+[ -x "$DIR/console_debug.sh" ] \
+    || { echo "missing $DIR/console_debug.sh" >&2; exit 1; }
 
 mkdir -p "$OUT"
 say() { echo "$@" | tee -a "$OUT/run.log"; }
@@ -125,6 +127,20 @@ dmesg -T > "$OUT/dmesg_load.txt" 2>/dev/null || true
 
 PM_TEST_SAVED="$(cat /sys/power/pm_test)"
 dmesg -C 2>/dev/null || true
+
+# Keep the console alive through the suspend and pass level-4 nv_printf lines.
+# Applies to the serial/SoL console whether or not netconsole is in use.
+"$DIR/console_debug.sh" on 2>&1 | tee -a "$OUT/console.log"
+
+# Optional out-of-band log: a hung resume freezes the ring buffer, but netpoll
+# keeps writing to the NIC.
+if [ -n "${NETCONSOLE_TARGET:-}" ]; then
+    "$DIR/netconsole.sh" start "$NETCONSOLE_TARGET" 2>&1 | tee -a "$OUT/netconsole.log"
+    nc_rc=${PIPESTATUS[0]}
+    [ "$nc_rc" -eq 0 ] || say "WARN: netconsole start failed (rc=$nc_rc)"
+    say "== netconsole -> $NETCONSOLE_TARGET"
+fi
+
 say "== pm_test=devices suspend/resume cycle"
 echo devices > /sys/power/pm_test
 # Disk marker: survives a failed resume.  A hang leaves this file and no
@@ -142,6 +158,11 @@ grep -E "BF16: SR VARY|BF16: SRMeta|BF16: SRDUMP|BF16: FMC boot params|Fatal|RmI
     "$OUT/dmesg.txt" | tail -40 | tee -a "$OUT/run.log"
 say "== nvidia-smi:"
 timeout -s KILL 20 nvidia-smi -L 2>&1 | tee -a "$OUT/run.log"
+
+if [ -n "${NETCONSOLE_TARGET:-}" ]; then
+    "$DIR/netconsole.sh" stop >/dev/null 2>&1 || true
+fi
+"$DIR/console_debug.sh" off 2>&1 | tee -a "$OUT/console.log" || true
 
 "$DIR/load_patched.sh" --restore 2>&1 | tee -a "$OUT/restore.log" || true
 say "== done rc(load=$load_rc susp=$susp_rc)"

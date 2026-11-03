@@ -27,6 +27,10 @@
   is telemetry, not a lever.
 - The full-rate encoding is measured: a PRO 6000 reads `FEAT_READOUT_1 = 0`
   with every arithmetic speed fuse at 0.
+- The flanking readouts, `FEAT_READOUT_0` and `FEAT_READOUT_2`, carry ECC
+  capability flags only; `READOUT_1` is the sole selector carrier
+  ([the readout
+  decode](../experiments/12_feat-readout-decode.md#122-the-consumer-class-names-the-bits)).
 - The PRO 6000's FEAT bank uses the same PL3-only write gate as the 5090.
 
 **In this spec.**
@@ -355,6 +359,19 @@ decode](../experiments/01_software-register-writes.md#015-the-permission-mask-ad
 - Two PRO 6000s read `FEAT_READOUT_1 = 0` with every arithmetic speed fuse at 0,
   and one card's FP32-accumulate rate equals its FP16-accumulate rate
   ([the reference dump](../experiments/08_assessment-and-cross-checks.md#0810-an-rtx-pro-6000-reference-dump)).
+- The override-enable fuses read the A100/170HX pattern on every measured
+  GB202 card — two 5090s, two PRO 6000s — so the software-override path is
+  not fuse-enabled on this generation
+  ([the debugger
+  group](../experiments/10_debugger-class-and-fecs-ucode.md#102-the-context-and-descriptor-spaces-read),
+  [the reference
+  dump](../experiments/08_assessment-and-cross-checks.md#0810-an-rtx-pro-6000-reference-dump)).
+- Every RM consumer of `FEAT_READOUT_0` and `FEAT_READOUT_2` decodes ECC
+  capability flags, all clear on the measured cards; no rate or
+  override-enable bit is read from either register, and the bits that differ
+  between the product classes have no reader in the image
+  ([the readout
+  decode](../experiments/12_feat-readout-decode.md#122-the-consumer-class-names-the-bits)).
 
 **Inferred or open.**
 
@@ -368,10 +385,9 @@ decode](../experiments/01_software-register-writes.md#015-the-permission-mask-ad
   reached the typed register space but needed a caller-owned RM channel.
 - The Ada persistence model. On GB202 an FLR resets the PLM and the devinit
   re-locks it; the override does not stay open across reset.
-- The override-enable fuses. `0x00820040`, `0x00820084`, and `0x008203f0` were
-  not read on GB202; on Ampere consumer parts they read `1`/`1`/`0`, and the
-  override path is described as requiring Falcon HS ([the external
-  cross-check](../experiments/08_assessment-and-cross-checks.md#0811-the-register-route-is-a-pl3-problem)).
+- The Blackwell semantics of the override-enable fuse words. The values are
+  measured, but the field meanings are the Ampere mapping carried over;
+  `0x82038c` reads `2` against Ampere's `1`.
 - Whether a PL3 write would change the Blackwell rate. The PRO 6000 full-rate
   state is all-zero fuses with every override-enable bit clear, so the override
   payload is still unvalidated ([the reference

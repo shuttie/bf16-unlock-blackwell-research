@@ -315,8 +315,8 @@ dumps and scans are in [vBIOS tools](../tools/vbios-tools/).
 - The scan is a plaintext scan. The encrypted head blob and the encrypted microcode
   bodies are not readable; the spec does not prove the executable devinit never
   targets the FEAT block. It closes the plaintext table route.
-- Target IDs are not publicly mapped. The app `0x23` = SEC2 identification is
-  inference.
+- Target IDs are not publicly mapped. The app `0x23` image is unidentified;
+  the earlier SEC2 reading was withdrawn with the FECS identification.
 - The writer is not named. The timing brackets it to a GPU-side devinit; the PMU is
   the leading candidate, not a proven one.
 - The custom-VBIOS description is a ceiling argument, not a full audit of the

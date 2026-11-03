@@ -25,7 +25,7 @@ and [3090](https://github.com/Zagitta/gpu-unlock) cards.
 - 2× RTX 5090 (GB202, `10de:2b85`), different board vendors and VBIOS revisions.
 - Host driver and GPU firmware 595.91.07, compute capability 12.0, CUDA 13 on
   Linux, 575 W.
-- Experiments ran 2026-10-25 to 2026-10-31.
+- Experiments ran 2026-10-25 to 2026-11-03.
 - Reference run: one RTX PRO 6000 Blackwell Workstation Edition (same GB202 die,
   `10de:2bb1`), 96 GB, driver and GSP-RM 615.71.09, CUDA 13.2, 500 W,
   2026-10-31.
@@ -185,6 +185,7 @@ the experiment record with the commands and artifacts.
 | Hooked suspend/resume (the host-built [descriptor and page table](specs/01_boot-chain.md#suspendresume)) | Page table is plaintext; saved state is encrypted per boot and card | Live structure, no exploit yet | [suspend/resume](experiments/06_sr-resume.md) |
 | Edited the [vBIOS](specs/05_vbios-and-devinit.md) and its [init tables](specs/05_vbios-and-devinit.md#devinit-authentication), including the no-flash loader route | No FEAT address in plaintext, tables authenticated, custom route tops out at PL2 | Dead, static | [vBIOS](experiments/07_plaintext-corpus.md#073-the-vbios-has-no-feat-address), [devinit](experiments/05_fmc-fsp-boot-inputs.md#0522-vbios-devinit-table-scan) |
 | Raced the reset (the [PL2-writable window](specs/02_privilege-and-rate-control.md#privilege-levels-and-the-plm) after an FLR) | Window is 1.32 s; the re-lock lands 1.85 s before GSP-RM starts | Dead, measured | [reset window](experiments/01_software-register-writes.md#016-the-post-reset-window-closes-before-gsp-rm) |
+| Decoded the readout consumers and mapped the firmware image (offline statics) | The readout bits the RM reads are ECC capability flags, not selectors; the image is a container with about 18.5 MB of plaintext and a 53.8 MB encrypted ucode blob whose decrypted contents transit RM memory at boot | Readout lead closed, capture lead opened | [readout decode](experiments/12_feat-readout-decode.md), [fwimage map](experiments/13_fwimage-map-and-bindata.md) |
 
 [The FMC debug-key search](experiments/07_plaintext-corpus.md#0710-the-fmc-key-search-comes-back-negative)
 is negative too: three known-answer variants and both debug containers over all
@@ -214,6 +215,20 @@ ucode table has no consumer in the open stack on GB202, and the RM boots GR
 through `sec2_acr` from RM memory ([the falcon
 probe](experiments/11_falcon-and-gr-window-probe.md), [the
 consumer](experiments/11_falcon-and-gr-window-probe.md#116-no-stack-component-reads-the-ucode-table)).
+
+Two offline groups landed since. The readout decode is closed: every RM
+consumer of the flanking readout registers is an ECC capability flag, so
+`READOUT_1` is the only selector carrier ([the readout
+decode](experiments/12_feat-readout-decode.md)). And the firmware image is
+mapped as a container: about 18.5 MB of plaintext, then a 53.8 MB encrypted
+`rm.bindata.bin` that holds the engine ucode behind per-blob SEC2 key
+derivation, with plaintext load descriptors inside
+([the fwimage map](experiments/13_fwimage-map-and-bindata.md)). The decrypted
+FECS/GPCCS ucode transits RM memory at every boot, so a timed capture reads
+it without the key — the [staged-ucode
+capture](IDEAS.md#staged-ucode-capture) is the lead that settles whether FECS
+microcode or SM silicon enforces the cap, and with it whether any PL3 write
+can change the rate at all.
 
 The [RISC-V debug
 engine](experiments/04_hs-sec2-fsp-memory.md#044-priscv-icd-is-a-live-debug-port)
@@ -291,7 +306,7 @@ expect rough edges. Each directory has a README with build and run steps.
 | [Direct probe](tools/direct-probe/) | Direct reads through the card's memory window, with no driver involvement: read-only register maps and streams | live card, root | read; can hang + reboot |
 | [Issue-rate probe](tools/issue-rate-probe/) | Register-resident tensor issue-rate benchmark; validates every output cell and records clocks and power | live 5090, CUDA 13 | read/write |
 | [vBIOS tools](tools/vbios-tools/) | Dumps the flash window and parses the image chain, info table, microcode table, and init tables | live card or a local dump | read |
-| [GSP-RM tools](tools/gsp-rm-tools/) | Ghidra helpers for the 72.8 MB RISC-V GSP-RM, a raw reference scanner, the module splitter, and the GSP log decoder | your own extracted firmware | offline |
+| [GSP-RM tools](tools/gsp-rm-tools/) | Ghidra helpers for the GSP-RM image (the ~18.5 MB plaintext region of the 72.8 MB file), a raw reference scanner, the module splitter, and the GSP log decoder | your own extracted firmware | offline |
 | [FMC tools](tools/fmc-tools/) | Extracts the FMC and boot images, verifies signatures, and runs the 16! key search | your own driver package | offline |
 | [Driver harness](tools/driver-harness/) | Instrumented-driver harness: boot-input and suspend/resume tests, FEAT samplers, context dumps, debug-engine tools | an exact 595.91.07 driver source tree | read/write; can hang + reboot |
 | [Boot tests](tools/boot-tests/) | Registry-key boot experiments: withholding boot regions and the host-driven FMC bootstrap | live card, root | read/write; can hang + reboot |

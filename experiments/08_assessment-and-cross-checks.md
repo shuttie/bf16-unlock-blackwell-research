@@ -388,11 +388,19 @@ Fuse values and the full-rate reference:
 
 The override-enable fuses separate the consumer and datacenter parts:
 
-| Fuse | A100 / 170HX | Consumer Ampere |
-|---|---:|---:|
-| `FUSE_EN_SW_OVERRIDE` (`0x00820040`) | 0 | 1 |
-| `FUSE_DIS_SW_OVR` (`0x00820084`) | 1 | 1 |
-| `FUSE_FEAT_OVR_DIS` (`0x008203f0`) | 0 | 0 |
+| Fuse | A100 / 170HX | Consumer Ampere | GB202 5090 (measured) | PRO 6000 (measured) |
+|---|---:|---:|---:|---:|
+| `FUSE_EN_SW_OVERRIDE` (`0x00820040`) | 0 | 1 | **0** | 0 |
+| `FUSE_DIS_SW_OVR` (`0x00820084`) | 1 | 1 | 1 | 1 |
+| `FUSE_FEAT_OVR_DIS` (`0x008203f0`) | 0 | 0 | 0 | 0 |
+| `SECURE_FEAT_OVR_QUADRO_WR_SEC` (`0x0082038c`) | 1 | 1 | **2** | **2** |
+
+The GB202 columns are measured — the PRO 6000 words from [the reference
+dump](#0810-an-rtx-pro-6000-reference-dump), the 5090 words from [the
+debugger group](10_debugger-class-and-fecs-ucode.md#102-the-context-and-descriptor-spaces-read)
+— and both classes read the A100/170HX pattern on `FUSE_EN_SW_OVERRIDE`, not
+consumer Ampere's `1`: the software-override path is not fuse-enabled on this
+generation.
 
 The survey reads the override path as architecturally available but requiring
 Falcon HS, and calls the host-level register-write route dead for compute unlock
@@ -870,6 +878,17 @@ different runtime and per-card words:
 | `FEAT_OVR_SM_SS1` | `0x00075005` | `0x00000001` |
 | `0x8238b0` ID | `0x1c5f331f` | `0x0db4b1c3` |
 
+The override-enable fuses read the same on both cards:
+[`FUSE_EN_SW_OVERRIDE`](../specs/03_register-map.md#fuse-and-otp) (`0x820040`)
+= 0, `FUSE_DIS_SW_OVR` (`0x820084`) = 1, `SECURE_FEAT_OVR_QUADRO_WR_SEC`
+(`0x82038c`) = 2, and `FUSE_FEAT_OVR_DIS` (`0x8203f0`) = 0, stable across the
+three reads. The full-rate card reads the A100/170HX pattern on
+`FUSE_EN_SW_OVERRIDE`, not the consumer-Ampere `1`: the software-override path
+is not fuse-enabled on the PRO 6000, which agrees with its every-enable-bit-clear
+[`SS0`/`SS1`](../specs/03_register-map.md#ss0-and-ss1). The 5090 reads the
+same words ([the debugger
+group](10_debugger-class-and-fecs-ucode.md#102-the-context-and-descriptor-spaces-read)).
+
 The same-card control is the decisive line: on card A the FP16 → FP16 and
 FP16 → FP32 rates agree within 0.4%; on the 5090 the external FP16 → FP16 number
 is 1.97× its FP16 → FP32 number.
@@ -907,7 +926,9 @@ is 1.97× its FP16 → FP32 number.
     bank and the cross-part tables.
 - **Open question:** a same-card cold boot would show whether `SS0`/`SS1` move
   the way the 5090's do; the two cards already show cross-card differences. The
-  override payload format still needs a PL3 write or an authoritative header.
+  override payload format still needs a PL3 write or an authoritative header —
+  and with `FUSE_EN_SW_OVERRIDE` reading `0` on both product classes, the
+  payload question is now bounded by a fuse gate, not just the PLM.
 
 ## 08.11 The register route is a PL3 problem
 

@@ -29,12 +29,16 @@
   function-level trace.
 - There is no per-launch firmware trace. The rate-relevant RM work happens once,
   at engine/context initialization.
+- The FWSEC-LIC unit logs with RM-internal codes `0x20c`–`0x211` (secure-data
+  verification) and `0x280`–`0x284` (the GSP firmware-image parser); they name
+  the SEC2 decryption path for the engine ucode.
 
 **In this spec.**
 
 - [Boot error codes](#boot-error-codes)
 - [Failure taxonomy](#failure-taxonomy)
 - [NV status codes](#nv-status-codes)
+- [FWSEC-LIC error codes](#fwsec-lic-error-codes)
 - [Data sentinels and bad reads](#data-sentinels-and-bad-reads)
 - [GSP log ring format](#gsp-log-ring-format)
 - [What the decoder recovers](#what-the-decoder-recovers)
@@ -129,6 +133,28 @@ These are the RM status values seen in the experiments:
 `SUCCESS`, which is why register claims need a readback. See [the crashed-GSP
 run](../experiments/01_software-register-writes.md#011-first-register-write-hits-a-crashed-gsp).
 
+## FWSEC-LIC error codes
+
+These are RM-internal logger codes, not host-visible statuses. They come from a
+contiguous log-thunk array at `0x134bc98`–`0x1352000` in the plaintext RM: each
+entry loads its error string, its log-message ID, and its code, then tail-jumps
+to the logger. The entries are reached by compressed dispatch, so no static
+caller exists — neither the reference scan nor the disassembler's call analysis
+finds one ([the secure-data
+unit](../experiments/13_fwimage-map-and-bindata.md#134-the-fwsec-lic-secure-data-unit)).
+
+| Range | Family | Evidence |
+|---|---|---|
+| `0x20c`–`0x211` | verify-secure-data: generic header not found, IMEM-to-DMEM copy, key-derivation and signature helpers not in HS mode, signature invalid | [the secure-data unit](../experiments/13_fwimage-map-and-bindata.md#134-the-fwsec-lic-secure-data-unit) |
+| `0x280`–`0x284` | GFW image parser: invalid firmware image, invalid IFR image, IFR invalid size, invalid extended-image data, invalid data-struct sign, invalid ROM sign | [the same record](../experiments/13_fwimage-map-and-bindata.md#134-the-fwsec-lic-secure-data-unit) |
+
+The verify-secure-data thunks log with message IDs `0x203fede8`–`0x203fee48`,
+one `0x18` stride in the same allocation as the surrounding unit's IDs. The
+same unit's wider string inventory is the FWSEC-LIC family — SEC2 mutex
+acquire and release over the BSI write mutex, PLM read and write channels,
+mutex IDs — plus `NV_UDE_ERR_FWSECLIC_DID_NOT_EXECUTE` for the GC6
+re-execution path.
+
 ## Data sentinels and bad reads
 
 Bad reads return `0xBADFxxxx`. Bits `[31:8]` are the PRI-ringstation error code
@@ -151,7 +177,7 @@ timeout, separate from decode.
 | `0xBADF1100` | `FECS_PRI_DECODE` | address not decodable |
 | `0xBADF1301` | `0xBADF13` (not public) | GR space `0x1c8000`–`0x1cbcff` |
 | `0xBADF202B` | `0xBADF20` (not public) | GR space `0x22c000`–`0x22f9ff` |
-| `0xBADF2020` | `0xBADF20` (not public) | GR space `0x1e0000` and `0x1fe000` on one card |
+| `0xBADF2020` | `0xBADF20` (not public) | GR space `0x1e0000` and `0x1fe000` through the debugger-class GLOBAL read, on both cards; the direct BAR0 sweep reads other sentinels there |
 | `0xBADFFFFF` | not public | GSP-master read of the four PRISCV ICD registers |
 
 The low byte also encodes the caller or engine for the blocked/port cases, which

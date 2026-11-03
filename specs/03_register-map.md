@@ -6,9 +6,10 @@
   FECS, SM/GR, GSP Falcon, PRISCV, FSP, SEC2, PMU/CMS2, and the bad-read
   sentinels.
 - **Bench.** Two RTX 5090s (GB202, `10de:2b85`), driver and GSP-RM 595.91.07,
-  and one RTX PRO 6000 Blackwell reference (same GB202 die, `10de:2bb1`,
-  615.71.09). All offsets are BAR0 byte offsets; the 5090 values are stock
-  unless the row says per-card, per-boot, or unresolved.
+  and two RTX PRO 6000 Blackwell references (same GB202 die, `10de:2bb1`; one
+  power-on each, drivers 615.71.09 and 595.104.02). All offsets are BAR0 byte
+  offsets; the 5090 values are stock unless the row says per-card, per-boot, or
+  unresolved.
 - **Evidence.** Measured values link to the experiment that produced them.
   Cross-part values come from the public survey in [the external
   corpus](../experiments/08_assessment-and-cross-checks.md#085-external-cross-part-register-corpus),
@@ -45,6 +46,7 @@
   decode, and per-card state.
   - [Write gate](#write-gate)
   - [Readout decode](#readout-decode)
+  - [Readout consumers](#readout-consumers)
   - [SS0 and SS1](#ss0-and-ss1)
   - [Other FEAT words](#other-feat-words)
   - [Cross-part FEAT values](#cross-part-feat-values)
@@ -96,16 +98,16 @@ Block `0x820000`–`0x8207ff`.
 | Offset | Name | Value / note |
 |---|---|---|
 | `0x00820000` | `FUSECTRL` | fuse controller |
-| `0x00820040` | `FUSE_EN_SW_OVERRIDE` | software override enable; `1` on consumer Ampere, `0` on A100/170HX; not read on GB202 |
+| `0x00820040` | `FUSE_EN_SW_OVERRIDE` | software override enable; `1` on consumer Ampere, `0` on A100/170HX and every measured GB202 card (two 5090s, two PRO 6000s) |
 | `0x0082007c` | `DISABLE_FUSE_PROGRAM` | fuse programming disable |
-| `0x00820084` | `FUSE_DIS_SW_OVR` | `1` on the sampled Ampere parts; not read on GB202 |
+| `0x00820084` | `FUSE_DIS_SW_OVR` | `1` on the sampled Ampere parts, both PRO 6000s, and the 5090 |
 | `0x008200d0`, `d8`, `dc`, `f8` | PLM-shaped | `0xfffffb8f` (read all / write L3) |
 | `0x008200d4`, `e8`, `ec`, `f0` | PLM-shaped | `0xfffffbfc` (read L2–L3 / write all) |
 | `0x008200e0`, `e4`, `f4` | PLM-shaped | `0x00800b8f` (read all / write L3) |
 | **`0x008200fc`** | `FUSE_SS_PLM` (page-0 mask) | **`0xfffffbff`**; reads as write-all, but it is not the effective gate |
 | `0x00820224` | `FUSE_SS_DP` | `0` |
-| `0x0082038c` | `SECURE_FEAT_OVR_QUADRO_WR_SEC` | Quadro secure write; `1` on the sampled Ampere parts; not read on GB202 |
-| `0x008203f0` | `FUSE_FEAT_OVR_DIS` / `OPT_FEATURE_FUSES_OVERRIDE_DISABLE` | `0`; the override is not permanently disabled |
+| `0x0082038c` | `SECURE_FEAT_OVR_QUADRO_WR_SEC` | Quadro secure write; `1` on the sampled Ampere parts, `2` on both 5090s and both PRO 6000s |
+| `0x008203f0` | `FUSE_FEAT_OVR_DIS` / `OPT_FEATURE_FUSES_OVERRIDE_DISABLE` | `0` on all sampled parts: Ampere, two 5090s, two PRO 6000s |
 | `0x0082059c` | `FUSE_SS_FFMA` | `0` |
 | `0x0082074c` | `OPT_SECURE_GSP` / `..._DEBUG_DIS` | `1`; writes dropped from PL0 and PL2 |
 | `0x008207d4` | `FUSE_SS_FMLA16` | `0` |
@@ -120,11 +122,15 @@ The fuse shadow is soft-read-only from both PL0 and PL2, even where the PLM says
 otherwise; a PLM value is not a writability oracle. See [the fuse and rate-modifier
 test](../experiments/01_software-register-writes.md#014-the-fuse-shadow-and-the-inert-modifier).
 
-The override-enable fuses were not read on the 5090 or the PRO 6000. On Ampere
-consumer parts `FUSE_EN_SW_OVERRIDE` reads `1`, `FUSE_DIS_SW_OVR` reads `1`, and
-`FUSE_FEAT_OVR_DIS` reads `0`; on A100 and the 170HX `FUSE_EN_SW_OVERRIDE` reads
-`0`. The cross-part survey reads the override path as architecturally available
-but requiring Falcon HS ([the external
+The override-enable fuses read the A100/170HX pattern on every measured GB202
+card — two 5090s, two PRO 6000s — so the software-override path is not
+fuse-enabled on this generation ([the debugger
+group](../experiments/10_debugger-class-and-fecs-ucode.md#102-the-context-and-descriptor-spaces-read),
+[the reference
+dump](../experiments/08_assessment-and-cross-checks.md#0810-an-rtx-pro-6000-reference-dump));
+the field semantics are the Ampere mapping carried over. The cross-part survey
+reads the override path as architecturally available but requiring Falcon HS
+([the external
 cross-check](../experiments/08_assessment-and-cross-checks.md#0811-the-register-route-is-a-pl3-problem)).
 
 Sentinel `0xBADF510C` clusters at `0x820158`–`0x8201ec`, `0x8204a8`–`0x8204b0`,
@@ -165,7 +171,7 @@ Block `0x823800`–`0x8238b0`.
 | `0x00823808` | `FEAT_OVR_QUADRO` | `0x01000280` (`41:00.0`) / `0x01000380` (`c1:00.0`); per-card bit 8, classification not rate |
 | `0x0082380c` | `FEAT_OVR_ECC` | `0x00888888`; consumer-GA10x stock ECC override; writes dropped |
 | `0x00823810` | `FEAT_OVR_ECC_1` | `0x002a2aaa` |
-| `0x00823814` | `FEAT_READOUT_0` | `0x00000233`; bit 16 = ECC enablement (0 here) |
+| `0x00823814` | `FEAT_READOUT_0` | `0x00000233`; ECC capability readout, see [readout consumers](#readout-consumers) |
 | `0x00823818` | `FEAT_READOUT_1` | `0x00c36180`; eight 3-bit selectors plus DP |
 | `0x0082381c` | `FEAT_OVR_SM_SS0` | `0x21240001` (`41:00.0`) / `0x54226037` (`c1:00.0`); runtime state |
 | `0x00823820` | `FEAT_OVR_SM_SS1` | `0x00000002` (`41:00.0`) / `0x00026005` (`c1:00.0`); runtime state |
@@ -242,6 +248,36 @@ The decoder is a per-chip HAL method that reads fuse HAL offset `0x3818`; the
 GB202 implementation constant is `0x02`, outside the `{5..9}` twin set, so the
 `0x3818` decoder is installed ([the HAL
 decoder](../experiments/07_plaintext-corpus.md#078-the-decoder-is-installed-by-the-hal)).
+
+### Readout consumers
+
+The RM reads the readouts through the fuse accessor, which takes a byte offset
+from the `0x820000` block: `0x3814` is `FEAT_READOUT_0`, `0x3818` is
+`FEAT_READOUT_1`, `0x3828` is `FEAT_READOUT_2`. The RM-side consumers of the
+two flanking registers are all ECC / memory-RAS capability flags
+([the readout decode](../experiments/12_feat-readout-decode.md#122-the-consumer-class-names-the-bits)):
+
+| Register | Bit(s) | Consumer |
+|---|---|---|
+| `FEAT_READOUT_0` | 12 | ECC capability, fallback byte `+0x2b3` |
+| `FEAT_READOUT_0` | 14, 23, 24 | ECC capability, fallback byte `+0x2b7` |
+| `FEAT_READOUT_0` | 15, 16 | ECC enablement, read from live BAR0 by a separate MMIO-path wrapper |
+| `FEAT_READOUT_0` | 17 | ECC capability, fallback byte `+0x2b9` |
+| `FEAT_READOUT_0` | 18, 19 | ECC capability, fallback byte `+0x2bb`; also the reference count of an ECC step selector |
+| `FEAT_READOUT_0` | 26 | ECC capability, fallback byte `+0x2c5` |
+| `FEAT_READOUT_0` | 27 | ECC capability, fallback byte `+0x2c3` |
+| `FEAT_READOUT_0` | 29 | ECC capability, fallback byte `+0x2bf` |
+| `FEAT_READOUT_0` | 31 | ECC capability, fallback byte `+0x2c1` |
+| `FEAT_READOUT_2` | 5 | capability reader, installed in a second HAL object |
+| `FEAT_READOUT_2` | 10 | capability reader, no caller found |
+
+Every decoded bit reads zero on the measured 5090s and PRO 6000s. The bits
+that differ between the product classes (`READOUT_0` bits 0, 1, 4, 5, 8, 9)
+have no RM reader, and the three reader slots without callers cannot gate RM
+behavior ([the unused
+slots](../experiments/12_feat-readout-decode.md#123-three-reader-slots-have-no-callers)).
+`FEAT_READOUT_1` is the only readout that carries the selector; nothing in
+either flanking register is a rate or override-enable bit.
 
 ### SS0 and SS1
 
@@ -427,7 +463,10 @@ The ROM window is the same aperture that holds the flash at BAR0 + `0x300000`
 ([where the flash sits](../specs/05_vbios-and-devinit.md#where-it-sits)). A dense
 read of `0x310000` looks like memory because the vBIOS carries the encrypted
 ucode bodies; the words match the PROM dump exactly. The debugger's GLOBAL read
-is therefore a BAR0 read, not a separate GR address space.
+is therefore a BAR0 read, not a separate GR address space — but the two routes
+are not identical at every word: at `0x1e0000` and `0x1fe000` the debugger-class
+read returns `0xBADF2020` on both cards while the table's direct sweep reads
+`0xBADF5040` and the `0x80000000` marker, a per-route sentinel difference.
 
 ### The per-card table at 0x1f2000
 
@@ -638,6 +677,7 @@ analysis](../experiments/08_assessment-and-cross-checks.md#089-sentinel-and-raw-
 | `0xBADF1100` | `0xBADF11` `FECS_PRI_DECODE` | address not decodable |
 | `0xBADF1301` | `0xBADF13` (not public) | GR space `0x1c8000`–`0x1cbc00` |
 | `0xBADF202B` | `0xBADF20` (not public) | GR space `0x22c000`–`0x22f800` |
+| `0xBADF2020` | `0xBADF20` (not public) | GR space `0x1e0000` and `0x1fe000` through the debugger-class GLOBAL read, on both cards ([the sentinel spec](08_errors-and-logging.md#data-sentinels-and-bad-reads)) |
 | `0xBADFFFFF` | `0xBADFFF` (not public) | GSP-master read of the four PRISCV ICD registers; the host reads `0` there |
 
 Three failure classes are distinguishable: decode (`0xBADF11xx`, `0xBADF41xx`),
@@ -684,5 +724,7 @@ The error-code taxonomy is in
   128-dword CMS2 table; whether the SEC2 DMEM is larger than 8 KB or masked.
 - The exact function of `0x137200` is open; the value and the refused PL2 access
   place it in the FECS/GR privilege block, not the FEAT bank.
-- The override-enable fuses (`0x820040`, `0x820084`, `0x8203f0`) are unread on
-  GB202; their Ampere values are cross-part data.
+- The 5090's `0x820084` read is from one card (`41:00.0`); every other
+  override-enable word is read on both 5090s and both PRO 6000s, and the
+  field semantics are the Ampere mapping carried over (`0x82038c` reads `2`
+  against Ampere's `1`).

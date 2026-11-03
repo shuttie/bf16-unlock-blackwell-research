@@ -68,12 +68,12 @@ is the per-block privilege mask. The linked specs define each in full.
 | Group | Files |
 |---|---|
 | Loader | `load_patched.sh` |
-| Boot inputs | `fmc_oracle.sh`, `wpr_oracle.sh`, `wpr_verified_patch_test.sh`, `run_gsp_patch_test.sh`, `bootbuf_dump.sh`, `boot_tamper_run.sh`, `fmc_buffer_probe.sh` |
+| Boot inputs | `fmc_oracle.sh`, `wpr_oracle.sh`, `sig_oracle.sh`, `wpr_verified_patch_test.sh`, `run_gsp_patch_test.sh`, `bootbuf_dump.sh`, `boot_tamper_run.sh`, `fmc_buffer_probe.sh` |
 | FEAT / PLM | `feat_preboot.sh`, `feat_preboot_flr.sh`, `featbank_writer_probe.sh`, `plm_window_race.sh`, `regkey_rate_sweep.sh` |
 | Suspend/resume | `sr_resume_test.sh`, `sr_oracle.sh`, `sr_dump_test.sh` |
 | PRISCV ICD | `icd_cmd.c`, `icd_rdm.c`, `icd_dump.c`, `icd_halt_probe.c`, `icd_bootimg_probe.c`, plus `icd_*probe.sh`, `icd_scan.sh`, `icd_trace_run.sh`, `icd_halt_run.sh` |
 | Context | `dump_ctx.sh`, `parse_ctxdump.py`, `parse_ctxfiles.py`, `analyze_crosscard.py`, `cuda_ctx.c`, `gprobe_with_ctx.sh` |
-| Logs / FB | `gsp_log_capture.sh`, `fb_capture.sh`, `fb_peek.py`, `fbread_analyze.py`, `icd_trace_analyze.py` |
+| Logs / FB | `gsp_log_capture.sh`, `console_debug.sh`, `netconsole.sh`, `fb_capture.sh`, `fb_peek.py`, `fbread_analyze.py`, `icd_trace_analyze.py` |
 | Patches | `bf16_ctxdump.patch`, `bf16_boot_instr.patch`, `bf16_fsp_eventfix.patch` |
 | COT test key | `gen_cot_key.py` |
 
