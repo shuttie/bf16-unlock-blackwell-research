@@ -53,6 +53,7 @@ and microcode table, and scan the plaintext for FEAT/FUSE/devinit references.
 | `parse_flash.py` | Walks the [PCI image chain](../../specs/05_vbios-and-devinit.md#pci-image-chain), [BIT](../../specs/05_vbios-and-devinit.md#bit), FwSec images, and [microcode table](../../specs/05_vbios-and-devinit.md#microcode-table). |
 | `bit_tokens.py` | Decodes and classifies every BIT token; diffs two dumps. |
 | `devinit_scan.py` | Scans for devinit opcodes, register-address lists, and FEAT/PLM anchors. |
+| `app23_decode.py` | Decodes the app `0x23` data tail and the DEVINIT data area: structure, per-card calibration, PLM defaults, live-value checks. |
 
 ## Build
 
@@ -88,6 +89,7 @@ sudo ./prom_read_raw 0000:41:00.0 prom_full_41.bin
 python3 -I parse_flash.py flash_41.bin
 python3 -I bit_tokens.py flash_41.bin [other.bin]
 python3 -I devinit_scan.py flash1m_41.bin [other.bin]
+python3 -I app23_decode.py flash1m_41.bin flash1m_c1.bin
 ```
 
 `parse_flash.py` expects a standalone image that starts with `0x55AA`. For the
@@ -180,6 +182,23 @@ The PLM anchors are owned by app `0x23`/target `0x0E`:
 
 Those values are PLM (privilege-level mask) encodings; the [register
 map](../../specs/03_register-map.md#feat-bank) decodes them.
+
+`app23_decode.py` on two 1 MiB dumps:
+
+```text
+== tail @0xc8000..0xd5a0c dword census
+  dwords=13955 distinct=325
+    badf1100 n=6723  badf5040 n=5931  00000000 n=603
+== live FEAT values vs tail (both cards, tail..0x100000)
+  READOUT_1 0x00c36180  none
+  SS0_41                none
+== PLM-family dword census (whole image)
+  FEAT_PLM_pair_locked   fffffb8f n=4
+  FUSE_SS_PLM_locked     fffffbff n=7
+```
+
+The full decode is [the app `0x23`
+record](../../experiments/18_vbios-app23-decode.md).
 
 ## Safety and access
 

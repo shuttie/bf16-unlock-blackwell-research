@@ -70,7 +70,6 @@ a different stack. Leads that already ran are in
 | P0 | C29 | [Engine naming and the unmapped bands](#engine-naming-and-the-unmapped-bands) | Names done; only the map band remains | short, read-only after a reboot |
 | P0 | C30 | [RM interface and log census](#rm-interface-and-log-census) | Every host-callable handler, mapped or ruled out | offline, days |
 | P0 | C23 | [Computed-offset sweep and devinit handlers](#computed-offset-sweep-and-devinit-handlers) | Reopens or closes the no-RM-writer claim | offline, days |
-| P0 | C31 | [Cross-version corpus diff](#cross-version-corpus-diff) | Names late-added checks and the older images to test | offline, days |
 | P1 | C01 | [SR descriptor and page table](#sr-descriptor-and-page-table) | PL3 code execution | 1–2 days, reboots |
 | P1 | C11 | [Context patch buffer](#context-patch-buffer) | A PL2 write primitive | 1 day |
 | P1 | C28 | [Timed EMEM and DMEM capture](#timed-emem-and-dmem-capture) | The only run that can return unpredicted information | 1–2 days, one wedge |
@@ -80,7 +79,6 @@ a different stack. Leads that already ran are in
 | P2 | C24 | [Boot-args buffer](#boot-args-buffer) | A new parser surface or a closed buffer | 1–2 days, reboots |
 | P2 | C19 | [SR saved-state malleability](#sr-saved-state-malleability) | A PL2 foothold | 1 day, after C01 |
 | P2 | C10 | [Per-SM channel](#per-sm-channel) | The last non-PL3 register space | short, live card |
-| P2 | C03 | [vBIOS app 0x23](#vbios-app-0x23) | The only direct-unlock candidate | offline decode |
 | P2 | C22 | [vBIOS ucode key search](#vbios-ucode-key-search) | May name the FEAT writer | offline, days |
 | P3 | C04 | [Override payload](#override-payload-format) | Validates a writer; the endgame questions | post-writer; fold into a PRO rental |
 | P3 | C33 | [PL2 read oracle](#pl2-read-oracle) | Decrypted ucode and WPR contents | weeks; needs a C11 or C20 primitive |
@@ -254,6 +252,58 @@ The class is an observability path, not a write or a cross-client read.
   distinct debug code path exists to leak ([the 615
   corpus](experiments/16_crypto-model-compare.md#166-the-615-corpus-splits-and-resigns-the-fmc)).
 
+### The corpus spans three RM lineages
+
+- The three packages ship three RM lines — `r570_00`, `r596_84`, `r617_07` —
+  and the 615.78.08 driver carries the 617-lineage RM; the manifest module set
+  only grows per branch ([the module
+  map](experiments/17_cross-version-corpus-diff.md#171-the-module-map-spans-three-rm-lineages)).
+- The FMC header is frozen across the corpus: magic, flags, the `0x2801`
+  constant, zero tails, and the `body = code + data + 0xA00` law hold in all
+  fifteen containers on three branches, and the public linux-firmware sample
+  is the 570 production container byte-for-byte, so the header is closed as a
+  key source ([the header
+  census](experiments/17_cross-version-corpus-diff.md#172-the-fmc-and-gsprmboot-headers-are-stable)).
+- The secure-boot string families are identical in 570 and 595 and vanish from
+  the 615 image: `NV_FWSECLIC_ERR` 126 to 0, `NV_UDE_ERR` 103 to 0, and the
+  bare `DEVINIT`, `FWSEC`, and `UDE` substrings are gone, so the bench driver
+  is the last branch where those names are readable ([the string
+  removal](experiments/17_cross-version-corpus-diff.md#173-the-secure-boot-strings-vanish-in-615)).
+- The 595 RM added the `GSP-FMC` error family over 570 (ACR failure, LS
+  signature verification, PRI violation detection, an eFMC-versus-GSP hash
+  mismatch), which dates the FMC-to-RM handshake checks and names 570 as the
+  older image where they are absent; 615 added only bookkeeping strings
+  ([what each branch
+  added](experiments/17_cross-version-corpus-diff.md#174-what-each-branch-added)).
+- No driver branch ships a vBIOS, so a version diff of init tables needs a
+  second board source; that is the PRO rental in [the override
+  payload](#override-payload-format).
+
+### The DEVINIT data area is a default map
+
+- The plaintext DEVINIT area is two regions — the app `0x23` tail
+  `0xC8000`–`0xD5A0C` and a second `0xE8010`–`0xF7B18` beyond the last PCI
+  image — and three of the four FEAT-PLM anchors belong to no ucode body, so
+  the earlier "app `0x23` data tail" ownership was under-scoped ([the
+  bounds](experiments/18_vbios-app23-decode.md#181-the-devinit-data-area-and-its-bounds)).
+- The area is a sparse register-default map: about 95% sentinel/poison fill,
+  eight per-instance 4 KiB pages, `0x200`-stride records, twin config blocks,
+  and 155 per-card calibration dwords ([the
+  structure](experiments/18_vbios-app23-decode.md#182-a-sparse-register-default-map)).
+- The PLM rows decode one-to-one against the live locked map: the FEAT pair
+  value, the `FUSE_SS_PLM` value, and the `0x500300` sparse-block family are
+  table data in flash, so the autonomous re-lock reads its values from this
+  table ([the PLM
+  defaults](experiments/18_vbios-app23-decode.md#183-the-plm-defaults-match-the-live-locked-map)).
+- No selector content exists anywhere in the area: zero occurrences of any
+  live FEAT value, `SS0`/`SS1` sample or per-card mask, or `SS0` halfword
+  shape on either card at any alignment, so the selector's per-card base is
+  not on readable flash ([no selector
+  content](experiments/18_vbios-app23-decode.md#184-no-selector-content-and-no-loader)).
+- No loader exists: target `0x01` is PMU in the only public mapping, no stack
+  component reads the table on GB202, and app `0x23` / target `0x0E` stays
+  unidentified. The lead is closed as a rate lever.
+
 ### The writer is narrowed to two candidates
 
 - Not the FSP: through the 1353 ms re-lock and the GSP start at 2991–3174 ms,
@@ -271,6 +321,10 @@ The class is an observability path, not a write or a cross-client read.
   block](experiments/14_engine-map-census.md#146-the-image-names-the-pmu-block)).
   Naming it does not unlock the card; no measured read path enters the
   block.
+- The re-lock's values are flash table data: the DEVINIT default map carries
+  the locked PLM entries as table rows, authenticated in Heavy Secure, so the
+  decode names the writer's data source, not an edit path ([the PLM
+  defaults](experiments/18_vbios-app23-decode.md#183-the-plm-defaults-match-the-live-locked-map)).
 
 ### The engine map is measured
 
@@ -505,8 +559,11 @@ and the first two are answerable only after a PL3 writer exists.
    block `0x8f4000`, a blocked secure core beside the FSP ([the image names
    the PMU
    block](experiments/14_engine-map-census.md#146-the-image-names-the-pmu-block)).
-   What stays open is PMU-versus-latch, a timing question, not a base
-   question.
+   The re-lock values are [table data in
+   flash](experiments/18_vbios-app23-decode.md#183-the-plm-defaults-match-the-live-locked-map),
+   and the selector's per-card base is absent from readable plaintext, so the
+   writer reads per-card state the flash does not carry. What stays open is
+   PMU-versus-latch, a timing question, not a base question.
 
 ### Engine naming and the unmapped bands
 
@@ -576,30 +633,6 @@ consumers.
 **Decision.** A computed reference reopens the no-RM-writer claim and feeds
 [the load-bearing unknowns](#the-load-bearing-unknowns). An empty sweep
 leaves the devinit attribution resting on the live poll alone.
-
-### Cross-version corpus diff
-
-**Where it comes from.** Every static claim is one driver and one GSP-RM
-version, 595.91.07, plus the PRO 615.71.09 and 595.104.02 references ([the
-fwimage
-map](experiments/13_fwimage-map-and-bindata.md#131-the-libos-manifest-and-the-module-chain)).
-The driver package ships production and debug FMC containers, and the
-14-container corpus already exists for the key search ([the FMC
-container](experiments/07_plaintext-corpus.md#074-fmc-container-format-and-signature)).
-No version-to-version diff has been run. The corpus now spans three branches
-- 570.144, 595.91.07, and 615.78.08 - and 615.78.08 restructures it: the
-engine ucode moves into a `NVUCODES` container and the debug FMC is the
-production image re-signed ([the 615
-corpus](experiments/16_crypto-model-compare.md#166-the-615-corpus-splits-and-resigns-the-fmc)).
-
-**Try.** Extract the GSP-RM, `GspRmBoot`, FMC headers, and vBIOS from every
-available driver branch, Linux and Windows, plus the public `linux-firmware`
-sample. Diff the plaintext GSP-RM per module, the vBIOS init tables, and the
-FMC headers; correlate header fields with production/debug and version.
-
-**Decision.** A check that appears only in a later version names a
-security-relevant parser and an older image to test. A stable header with no
-key field closes the header as a key source.
 
 ### SR descriptor and page table
 
@@ -799,26 +832,6 @@ live channel, and a per-SM offset under a valid group/subgroup mask. The
 that changes with the selector would reopen it; the inert `0x504204` and the
 `0x504240` table do not.
 
-### vBIOS app 0x23
-
-**Where it comes from.** The app `0x23` data tail is the only vBIOS artifact
-carrying the exact FEAT PLM (privilege-level mask) values, in low-entropy
-sentinel-structured data ([the devinit
-scan](experiments/05_fmc-fsp-boot-inputs.md#0522-vbios-devinit-table-scan)).
-The devinit tables and scripts are authenticated in Heavy Secure and bound to
-the device ID, so a host edit does not reach the GPU-side devinit ([the
-devinit authentication](specs/05_vbios-and-devinit.md#devinit-authentication)).
-
-**Try.** Decode the data as a 4-byte-stride array against the live block maps
-([the FEAT bank](specs/03_register-map.md#feat-bank)). Map the four ucode
-app/target IDs to their loaders in the GSP-RM ([the microcode
-table](specs/05_vbios-and-devinit.md#microcode-table)). This is an offline
-task; the earlier boot-edit idea is not a pre-lock template.
-
-**Decision.** A decoded write table or loader mapping opens the data tail. A
-plain configuration table closes it. Use [the vBIOS tools](tools/vbios-tools/)
-for the dump and parse.
-
 ### vBIOS ucode key search
 
 **Where it comes from.** The 16! key search targeted the FMC and SEC2 booter
@@ -856,7 +869,8 @@ directory](experiments/13_fwimage-map-and-bindata.md#135-the-generic-header-blob
 
 **Decision.** A decrypted PMU body names the pre-lock writer and may carry
 the FEAT write table; it feeds [the load-bearing unknowns](#the-load-bearing-unknowns)
-and [vBIOS app 0x23](#vbios-app-0x23) at once. A negative result extends the
+and would confirm the [DEVINIT default-map](#the-devinit-data-area-is-a-default-map)
+decode at once. A negative result extends the
 FMC conclusion to the vBIOS corpus and closes the decrypt route for good. For
 the bindata corpus, weigh the search against [the staged-ucode
 capture](#staged-ucode-capture) first: the capture reads the same code with
@@ -890,9 +904,10 @@ same-card cold-boot series on a PRO 6000 and compare `SS0`/`SS1` movement
 with the 5090's ([the FEAT-bank boot
 test](experiments/05_fmc-fsp-boot-inputs.md#0520-feat-bank-across-boots-and-flr)).
 The 2026-10-31 rentals captured only the register banks and the issue rate;
-add the PRO 6000's vBIOS and GSP-RM image to the same session, so [vBIOS app
-0x23](#vbios-app-0x23) and [the vBIOS ucode key search](#vbios-ucode-key-search)
-get the full-rate card's corpus. Run the exact payload only after a PL3
+add the PRO 6000's vBIOS and GSP-RM image to the same session, so [the vBIOS
+ucode key search](#vbios-ucode-key-search) gets the full-rate card's corpus
+and the [DEVINIT default map](#the-devinit-data-area-is-a-default-map) gets a
+cross-board compare. Run the exact payload only after a PL3
 writer exists, and treat that session as the answer to [the load-bearing
 unknowns](#the-load-bearing-unknowns): the override plumbing and the
 live-or-latched question.
@@ -988,17 +1003,25 @@ return information nobody predicted.
 ### One driver version carries every static claim
 
 Every parser result and every static closure is 595.91.07, plus the two PRO
-reference versions. A check that appears only in a later branch names both
-the security-relevant parser and the older image where it is absent, and the
-14-container corpus to test that already exists. Shrunk by [the cross-version
-diff](#cross-version-corpus-diff).
+reference versions. The corpus diff ran and inverted the worry: the string
+families that carry the static claims are identical in 570 and 595 and are
+dropped entirely from the 617-lineage image ([the string
+removal](experiments/17_cross-version-corpus-diff.md#173-the-secure-boot-strings-vanish-in-615)),
+so the readable window closes at the bench driver and later branches cannot
+be string-mapped the same way. What the diff did date is the 595-only
+`GSP-FMC` check family, absent in 570; no card on the bench runs 570, so a
+behavioral differential across that step stays untested.
 
 ### The readable quarter of the image
 
 About 18.5 MB of the 72.8 MB GSP-RM file is plaintext. The no-RM-writer claim
 and the FECS command map rest on scans of the readable part; the enforcement
 ucode and any RM-loaded applet sit in the encrypted `rm.bindata.bin`. The
-honest form of those claims is "no writer in the readable quarter." Shrunk by
+honest form of those claims is "no writer in the readable quarter," and the
+quarter itself shrinks: the 617-lineage image drops the secure-boot string
+families from its plaintext ([the string
+removal](experiments/17_cross-version-corpus-diff.md#173-the-secure-boot-strings-vanish-in-615)).
+Shrunk by
 [the computed-offset sweep](#computed-offset-sweep-and-devinit-handlers), [the
 crypto-model
 compare](experiments/16_crypto-model-compare.md), and [the PL2 read
