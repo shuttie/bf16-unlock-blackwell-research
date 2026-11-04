@@ -352,8 +352,10 @@ Signature Verified Successfully
   [SHA-384](../specs/04_firmware-formats.md#signature-envelope) over the whole container, header included; the signature is `r || s`.
   Two public keys verify.
 - **What we learned:**
-  - Production and debug keys verify different containers. Seven containers
-    have a valid hash but no inline key block.
+  - Production and debug keys verify different containers. The seven bytes
+    after each envelope's public-key point are the key record's tail, not an
+    inline key block; the correction is [the container
+    census](../experiments/16_crypto-model-compare.md#165-the-container-census-names-the-chips-and-the-keys).
   - [Body entropy](../specs/04_firmware-formats.md#entropy-and-variant-separation) is 7.999; ≤1 repeated 16-byte block per image; the prod/debug
     XOR zero count is 1,154 in 287,232 (chance rate).
   - A valid signature proves NVIDIA signed the container; it says nothing about

@@ -64,7 +64,7 @@
 | 03.7 | [Global buffers and the file-dump transport](#037-global-buffers-and-the-switch-to-file-dumps) | File dumps fix transport |
 | 03.8 | [Full context image and the false positive](#038-the-full-context-image-and-the-0x88888888-false-positive) | No rate constant in image |
 | 03.9 | [Comparing the GR context across both cards](#039-comparing-the-gr-context-across-both-cards) | No card-dependent selector field |
-| 03.10 | [The host can command FECS, and an unknown ID is fatal](#0310-the-host-can-command-fecs-and-an-unknown-id-is-fatal) | Host commands; no rate; unknown ID fatal |
+| 03.10 | [The host can command FECS, and an unknown ID is fatal](#0310-the-host-can-command-fecs-and-an-unknown-id-is-fatal) | No rate; unknown ID fatal |
 
 ## 03.1 Live FECS, FSP, and SEC2 probes
 
@@ -790,8 +790,8 @@ NVRM: Xid (PCI:0000:41:00): 154, GPU recovery action changed from 0x0 (None) to 
 - **What we learned:**
   - The mailbox sits under the fully open `0x4096d0` PLM, so the host (PL0) and
     GSP-RM (PL2) can both write it. The `0x409504` read is blocked.
-  - The completion slot echoes the command ID for a known command; the GSP-RM
-    later restores it to `1`.
+  - The completion slot carries the command ID for `0x21`; the GSP-RM later
+    restores it to `1`.
   - The handler has no safe default. An unknown ID kills the FECS, so the
     encrypted command table cannot be enumerated by a blind sweep.
   - The plaintext command map has no selector

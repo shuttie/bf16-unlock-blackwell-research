@@ -123,8 +123,9 @@ These are the RM status values seen in the experiments:
 
 | Code | Name | Context | Evidence |
 |---|---|---|---|
-| `0x1f` | `NV_ERR_INVALID_ARGUMENT` | `GPU_EXEC_REG_OPS` with every `GR_CTX` regtype | [GR_CTX rejected](../experiments/01_software-register-writes.md#017-per-context-registers-need-a-caller-owned-channel) |
-| `0x56` | `NV_ERR_NOT_SUPPORTED` | RISC-V debug stubs; `GPU_EXEC_REG_OPS` `FB` regtype | [FB unsupported](../experiments/01_software-register-writes.md#017-per-context-registers-need-a-caller-owned-channel) |
+| `0x1b` | `NV_ERR_INVALID_OBJECT_HANDLE` | Debugger `READ_MEMORY` with a null or unknown handle | [the command census](../experiments/10_debugger-class-and-fecs-ucode.md#104-the-non-register-commands-do-not-open-a-read-path) |
+| `0x1f` | `NV_ERR_INVALID_ARGUMENT` | `GPU_EXEC_REG_OPS` with every `GR_CTX` regtype; debugger `READ_SURFACE`, `READ_MEMORY` on a non-Memory handle, and a mixed batch | [GR_CTX rejected](../experiments/01_software-register-writes.md#017-per-context-registers-need-a-caller-owned-channel), [the command census](../experiments/10_debugger-class-and-fecs-ucode.md#104-the-non-register-commands-do-not-open-a-read-path) |
+| `0x56` | `NV_ERR_NOT_SUPPORTED` | RISC-V debug stubs; `GPU_EXEC_REG_OPS` `FB` regtype; debugger `GET_HANDLES` | [FB unsupported](../experiments/01_software-register-writes.md#017-per-context-registers-need-a-caller-owned-channel), [the command census](../experiments/10_debugger-class-and-fecs-ucode.md#104-the-non-register-commands-do-not-open-a-read-path) |
 | `0x62` | `NV_ERR_RESET_REQUIRED` | RPCs to a fatal GSP | [crashed GSP](../experiments/01_software-register-writes.md#011-first-register-write-hits-a-crashed-gsp) |
 | `0x65` | `NV_ERR_TIMEOUT` | GSP status queue after an undersized heap | [16 MiB heap](../experiments/05_fmc-fsp-boot-inputs.md#0514-16-mib-heap-request-wedges-the-boot) |
 
@@ -394,6 +395,8 @@ the ICD itself is in [GSP RISC-V and PRISCV](06_gsp-riscv-and-priscv.md).
 | `0xbadf1002` | GR register access timed out | the register is present but not readable through this path |
 | `0x137200` | privilege-protected FECS/GR register | PL2 access refused; not FEAT |
 | `0x62` | GSP is fatal | one reboot; check the preceding Xid |
+| Xid 13 | Graphics FECS Exception: ucode fatal error | an unassigned FECS command ID; reboot ([the host command record](../experiments/03_fecs-and-gr-context.md#0310-the-host-can-command-fecs-and-an-unknown-id-is-fatal)) |
+| Xid 154 | GPU recovery action is reset required | the driver cannot recover the engine; reboot |
 
 ## Limits and open questions
 

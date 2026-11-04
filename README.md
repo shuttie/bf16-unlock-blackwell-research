@@ -177,7 +177,7 @@ the experiment record with the commands and artifacts.
 
 | What I did | Result | Status | Records |
 |---|---|---|---|
-| Wrote the speed registers from the host window, from GSP firmware, and through the CUDA debugger class; tried the [fuse shadow](specs/03_register-map.md#fuse-and-otp) and the graphics engine's [rate register](specs/02_privilege-and-rate-control.md#the-rm-getter-and-the-host-view); read the falcon blocks | Success returned, writes dropped; the rate register is writable but reasserted and inert; the debugger class reads the bank but cannot write it; the FECS/GPCCS falcon blocks are absent, and the vBIOS ucode table has no consumer on GB202 | Dead, measured | [register writes](experiments/01_software-register-writes.md), [debugger class](experiments/10_debugger-class-and-fecs-ucode.md), [falcon probe](experiments/11_falcon-and-gr-window-probe.md) |
+| Wrote the speed registers from the host window, from GSP firmware, and through the CUDA debugger class; tried the [fuse shadow](specs/03_register-map.md#fuse-and-otp) and the graphics engine's [rate register](specs/02_privilege-and-rate-control.md#the-rm-getter-and-the-host-view); read the falcon blocks | Success returned, writes dropped; the rate register is writable but reasserted and inert; the debugger class reads the bank but cannot write it, and its other commands reach only the CUDA client's own memory; the FECS/GPCCS falcon blocks are absent, and the vBIOS ucode table has no consumer on GB202 | Dead, measured | [register writes](experiments/01_software-register-writes.md), [debugger class](experiments/10_debugger-class-and-fecs-ucode.md), [falcon probe](experiments/11_falcon-and-gr-window-probe.md) |
 | Used the driver's registry knobs (`RMOverrideSmSpeedSelect*`, `RMDisableFeatureDisablement`) | Parsed and stored, no rate or bank change | Dead, measured | [registry keys](experiments/02_registry-and-static-audit.md) |
 | Poked the GPU command ring ([FECS doorbell](specs/03_register-map.md#fecs) and [graphics engine context buffers](specs/03_register-map.md#sm-and-gr)) | The host can issue commands; no selector in the known set; an unassigned ID fatal-errors the FECS | Dead, measured | [FECS and context](experiments/03_fecs-and-gr-context.md) |
 | Read firmware memory (GSP, FSP, and SEC2 local memory; [RISC-V debug engine](specs/06_gsp-riscv-and-priscv.md#priscv-register-map)) | Local memory empty or locked to PL3; the debug engine reads the 14.4 MB GSP-RM code segment after a halt, not secure memory or the WPR | Dead or diagnostic | [secure memory](experiments/04_hs-sec2-fsp-memory.md) |
@@ -186,6 +186,8 @@ the experiment record with the commands and artifacts.
 | Edited the [vBIOS](specs/05_vbios-and-devinit.md) and its [init tables](specs/05_vbios-and-devinit.md#devinit-authentication), including the no-flash loader route | No FEAT address in plaintext, tables authenticated, custom route tops out at PL2 | Dead, static | [vBIOS](experiments/07_plaintext-corpus.md#073-the-vbios-has-no-feat-address), [devinit](experiments/05_fmc-fsp-boot-inputs.md#0522-vbios-devinit-table-scan) |
 | Raced the reset (the [PL2-writable window](specs/02_privilege-and-rate-control.md#privilege-levels-and-the-plm) after an FLR) | Window is 1.32 s; the re-lock lands 1.85 s before GSP-RM starts | Dead, measured | [reset window](experiments/01_software-register-writes.md#016-the-post-reset-window-closes-before-gsp-rm) |
 | Decoded the readout consumers and mapped the firmware image (offline statics) | The readout bits the RM reads are ECC capability flags, not selectors; the image is a container with about 18.5 MB of plaintext and a 53.8 MB encrypted ucode blob whose decrypted contents transit RM memory at boot | Readout lead closed, capture lead opened | [readout decode](experiments/12_feat-readout-decode.md), [fwimage map](experiments/13_fwimage-map-and-bindata.md) |
+| Censused every engine base in BAR0 (read-only through the debugger class) | The map below 16 MiB is complete: a fourth secure core beside SEC2, thirty-five engine-falcon bases in five families, no second command mailbox, and the per-card table survives a cold boot with partial mutation; two read windows crash GSP firmware itself | Map done; every engine family is named (GR at `0x400000`, NVDEC, NVENC, OFA, NVJPG; PMU at `0x8f4000`) | [engine-map census](experiments/14_engine-map-census.md), [tag decoder](experiments/15_tag-decoder.md) |
+| Compared the same encrypted components across the two cards and three driver versions | The corpus keys are not device-bound and the ucode-blob key is version-stable; duplicated blobs carry a per-copy 16-byte seed, so the corpus is not one key in ECB mode; 615 moves the engine ucode into a `NVUCODES` container and signs the production FMC as the debug FMC | Crypto model mapped | [crypto-model compare](experiments/16_crypto-model-compare.md) |
 
 [The FMC debug-key search](experiments/07_plaintext-corpus.md#0710-the-fmc-key-search-comes-back-negative)
 is negative too: three known-answer variants and both debug containers over all
@@ -197,7 +199,7 @@ files](experiments/).
 ## Where it stands
 
 The open leads, ranked by the decision each one buys, are in [Open
-leads](IDEAS.md). The short version: the FEAT readout is validated ([the
+leads](IDEAS.md), now organized as knowns, unknowns, and priorities. The short version: the FEAT readout is validated ([the
 reference
 dump](experiments/08_assessment-and-cross-checks.md#0810-an-rtx-pro-6000-reference-dump)),
 and the `SS0`/`SS1` override is the prior-art mechanism, not an open format:
@@ -212,10 +214,13 @@ The cold-boot FMC parser map is measured ([the parser
 group](experiments/09_fmc-cold-boot-parsers.md)): the boot inputs are bounded or
 exact, and the image bytes are authenticated. Next is the suspend/resume
 descriptor and page table, then the FSP framing. The vBIOS app `0x23` tail and
-the per-SM probes follow. The information leads — the debugger command census,
-the timed port capture, the engine map, the RM census, cross-version diffing,
-and the crypto model — are in [Open
-leads](IDEAS.md#discovery-what-produces-new-information). The FECS/GPCCS read route is closed: the falcon blocks
+the per-SM probes follow. The debugger command census ran: the non-register
+commands do not reach engine or secure memory, and the class remains an
+observability path ([the command
+census](experiments/10_debugger-class-and-fecs-ucode.md#104-the-non-register-commands-do-not-open-a-read-path)).
+The information leads — the timed port capture, the engine map, the RM census,
+cross-version diffing, and the crypto model — are in [Open
+leads](IDEAS.md#known-unknowns). The FECS/GPCCS read route is closed: the falcon blocks
 are absent at the documented bases, the GR window the GSP-RM admits is empty,
 and the space above it is the vBIOS ROM plus one per-card table. The vBIOS
 ucode table has no consumer in the open stack on GB202, and the RM boots GR
@@ -307,6 +312,7 @@ These specs are that material, cleaned up.
 | [GSP RISC-V and PRISCV](specs/06_gsp-riscv-and-priscv.md) | The GSP's register blocks, the debug engine, its command set, and the 14.4 MB code window |
 | [Memory and host access](specs/07_memory-and-host-access.md) | The card's memory windows, the protected firmware region, framebuffer heaps, and the sentinel fills that mark refusals |
 | [Errors and logging](specs/08_errors-and-logging.md) | The boot error codes, driver status codes, sentinels, and the GSP log format and decoder |
+| [Debugger class](specs/10_debugger-class.md) | The `GT200_DEBUGGER` allocation model, command surface, and what each command can reach |
 
 Most of this was measured on the two cards. Where a value came from a public
 header or is carried over from Ada/Ampere, the spec says so.
@@ -324,7 +330,9 @@ expect rough edges. Each directory has a README with build and run steps.
 | [vBIOS tools](tools/vbios-tools/) | Dumps the flash window and parses the image chain, info table, microcode table, and init tables | live card or a local dump | read |
 | [GSP-RM tools](tools/gsp-rm-tools/) | Ghidra helpers for the GSP-RM image (the ~18.5 MB plaintext region of the 72.8 MB file), a raw reference scanner, the module splitter, and the GSP log decoder | your own extracted firmware | offline |
 | [FMC tools](tools/fmc-tools/) | Extracts the FMC and boot images, verifies signatures, and runs the 16! key search | your own driver package | offline |
+| [Crypto compare](tools/crypto-compare/) | Offline ciphertext compares: extracts the encrypted bindata, joins blobs on identical blocks, localizes cross-card differences | your own dumps and driver files | offline |
 | [Driver harness](tools/driver-harness/) | Instrumented-driver harness: boot-input and suspend/resume tests, FEAT samplers, context dumps, debug-engine tools | an exact 595.91.07 driver source tree | read/write; can hang + reboot |
+| [Debugger class](tools/debugger-class/) | CUDA probe and `LD_PRELOAD` hook for the debugger-class command census: SM states, mappings, surfaces, memory reads | live card, CUDA 13 | read; `SUSPEND` changes context state |
 | [Boot tests](tools/boot-tests/) | Registry-key boot experiments: withholding boot regions and the host-driven FMC bootstrap | live card, root | read/write; can hang + reboot |
 
 No NVIDIA firmware, driver binary, or decompiled GSP-RM tree is in this repo. The

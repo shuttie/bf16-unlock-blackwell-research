@@ -55,7 +55,7 @@
 | 01.6 | [The post-reset window closes before GSP-RM](#016-the-post-reset-window-closes-before-gsp-rm) | Window ends before GSP-RM exists |
 | 01.7 | [Per-context registers need a caller-owned channel](#017-per-context-registers-need-a-caller-owned-channel) | Context route closed at PL0 |
 | 01.8 | [The debugger class reads but cannot write](#018-the-debugger-class-reads-the-bank-but-cannot-write-it) | Read matches; write drops |
-| 01.9 | [The re-lock moves `FUSE_SS_PLM` and no FSP register](#019-the-re-lock-moves-fuse_ss_plm-and-no-fsp-register) | One fuse word moves; FSP silent |
+| 01.9 | [The re-lock moves `FUSE_SS_PLM` and no FSP register](#019-the-re-lock-moves-fuse_ss_plm-and-no-fsp-register) | One fuse moves; FSP silent |
 | 01.10 | [The exact override payload is dropped from PL2](#0110-the-exact-override-payload-is-dropped-from-pl2) | Payload dropped; rate unchanged |
 
 ## 01.1 First register write hits a crashed GSP
@@ -812,7 +812,7 @@ config    0x00000003    coreplm  0xffffff8f    const  0xe81dc861
     test](../experiments/05_fmc-fsp-boot-inputs.md#0521-plm-re-lock-is-autonomous-devinit)
     names the reset behavior.
 - **Open question:** the PMU base is unknown; [engine-map
-  completion](../IDEAS.md#engine-map-completion) is where the writer is named.
+  naming](../IDEAS.md#engine-naming-and-the-unmapped-bands) is where the writer is named.
 
 ## 01.10 The exact override payload is dropped from PL2
 

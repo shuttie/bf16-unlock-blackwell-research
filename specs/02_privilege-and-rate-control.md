@@ -360,7 +360,8 @@ decode](../experiments/01_software-register-writes.md#015-the-permission-mask-ad
   writes](../experiments/01_software-register-writes.md#012-speed-register-write-from-gsp-is-dropped)
   and returns success.
 - The [debugger class reads the bank and its FEAT write
-  drops](../experiments/01_software-register-writes.md#018-the-debugger-class-reads-the-bank-but-cannot-write-it).
+  drops](../experiments/01_software-register-writes.md#018-the-debugger-class-reads-the-bank-but-cannot-write-it);
+  the class surface is in [the debugger-class spec](10_debugger-class.md).
 - The [FUSE shadow is not
   writable](../experiments/01_software-register-writes.md#014-the-fuse-shadow-and-the-inert-modifier)
   from PL0 or PL2.
@@ -424,7 +425,7 @@ decode](../experiments/01_software-register-writes.md#015-the-permission-mask-ad
 - Whether a Blackwell `SS0`/`SS1` write changes the rate. The prior art runs
   the same sequence on parts whose `FUSE_EN_SW_OVERRIDE` also reads `0`
   ([the two override paths](#the-two-override-paths)); the local measurement
-  needs a PL3 write to [`FEAT_OVR_PLM`](#write-gate).
+  needs a PL3 write to [`FEAT_OVR_PLM`](#feat-bank).
 
 ## What would count as an unlock
 

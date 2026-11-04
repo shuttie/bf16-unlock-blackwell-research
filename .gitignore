@@ -20,5 +20,6 @@ tools/driver-harness/cotkey/
 # Runtime outputs and local inputs
 tools/*/runs/
 tools/*/out/
+tools/debugger-class/c27_probe
 tools/fmc-tools/containers/
 tools/fmc-tools/selftest_tmp/

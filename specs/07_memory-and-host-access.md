@@ -28,7 +28,8 @@
 - The GSP, FSP, and SEC2 EMEM windows are small and mostly empty or blocked.
   None exposed Heavy Secure (HS) data in the steady-state samples.
 - Two reads can wedge the GPU: a BAR0 page scan of `0x300000`–`0x400000`, and
-  BAR1 framebuffer reads.
+  BAR1 framebuffer reads. Through the debugger read path, two more windows
+  crash GSP-RM outright: `0x42f900`–`0x431004` and the `0x525200` batch.
 
 **In this spec.**
 
@@ -93,6 +94,16 @@ coincides with Xid 13 → Xid 120 → Xid 154 on both cards. Causation is not pr
 but the working rule is: do not scan that aperture while the driver owns the GPU;
 read the flash through the single known-good window at `0x338000`. BAR1 FB reads
 also end in `GPU requires reset`. Budget a forced reboot for either.
+
+Through the CUDA debugger read path the crash is attributed, not coincident:
+reads in `0x42f900`–`0x431004` and the batch at `0x525200`–`0x532c00` fault
+the GSP task itself (Xid 120, `load access page fault @ pc:0x1368618`,
+partition `4#0`, task 3, both windows the same fault), then Xid 13 and Xid
+154 follow and only a reboot recovers the card ([the read that crashes
+GSP-RM](../experiments/14_engine-map-census.md#143-a-read-through-the-debugger-path-crashes-gsp-rm)).
+A debugger regop executes on the GSP, so a read-only host scan is still code
+execution there; every scan batch should carry a known-value canary read and
+an RM-status check, and the two windows above stay unscanned.
 
 ## WPR and FRTS layout
 

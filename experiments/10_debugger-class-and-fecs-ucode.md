@@ -24,6 +24,11 @@
   rate register is the inert `0x504204 = 5`
   ([the context and descriptor
   spaces](#102-the-context-and-descriptor-spaces-read)).
+- The non-register commands were censused. The SM error state is live and empty,
+  `GET_MAPPINGS` returns no mappings, `READ_SURFACE` refuses every VA, and
+  `READ_MEMORY` reaches only Memory objects in the CUDA client's own handle
+  database
+  ([the command census](#104-the-non-register-commands-do-not-open-a-read-path)).
 - `0x137200` reads `0xc120048a`; the FECS log pairs it with `0x14252215` and
   the refusal
   [`0xbadf5128`](../specs/08_errors-and-logging.md#data-sentinels-and-bad-reads)
@@ -49,6 +54,10 @@
 - No selector copy in the GR-context space; the `0x504204` write remains inert
   ([the context and descriptor
   spaces](#102-the-context-and-descriptor-spaces-read)).
+- No memory or state read outside the CUDA client. The SM error state, the
+  mappings, and the surface reads do not reach GSP, engine, or another client's
+  memory
+  ([the command census](#104-the-non-register-commands-do-not-open-a-read-path)).
 
 ## Experiments
 
@@ -57,6 +66,7 @@
 | 10.1 | [The class is exposed and allocatable](#101-the-class-is-exposed-and-allocatable) | `0x83de` in the 117-class list |
 | 10.2 | [The context and descriptor spaces read](#102-the-context-and-descriptor-spaces-read) | `0x504xxx` and `0x137000` live |
 | 10.3 | [The vBIOS ucode bodies](#103-the-vbios-ucode-bodies) | v6 descriptors, encrypted code |
+| 10.4 | [The non-register commands do not open a read path](#104-the-non-register-commands-do-not-open-a-read-path) | Client-local reads only; SM state empty |
 
 ## 10.1 The class is exposed and allocatable
 
@@ -330,3 +340,123 @@ high-entropy. The 1 MiB dump is the image the table describes.
   - [The ucode table correction](../experiments/11_falcon-and-gr-window-probe.md#113-the-ucode-table-is-the-pmu-lookup-table).
 - **Open question:** the engine behind target `0x0E`, and whether the encrypted
   bodies share the FMC key family.
+
+## 10.4 The non-register commands do not open a read path
+
+**Question.** Do the non-register `GT200_DEBUGGER` commands expose a memory or
+state read that the register-op path does not?
+
+**Why.**
+
+- The class is exposed and CUDA allocates it for its own context
+  ([the class record](#101-the-class-is-exposed-and-allocatable)); only
+  `EXEC_REG_OPS` had been issued
+  ([the write test](../experiments/01_software-register-writes.md#018-the-debugger-class-reads-the-bank-but-cannot-write-it)).
+- The public [command surface](../specs/10_debugger-class.md#command-surface)
+  defines single and batch memory reads, surface reads, mapping enumeration, SM
+  error states, and context suspend. Any of them could reach a buffer the caller
+  did not map, or carry a selector copy.
+- What it would give: a new read surface, or proof the class is
+  observability-only.
+
+**Method.**
+
+- Tool: [the debugger-class probe](../tools/debugger-class/). An `LD_PRELOAD`
+  hook records the CUDA driver's `NV_ESC_RM_ALLOC` sequence, captures the
+  `0x83de` object, derives the debuggee channel from the compute object's
+  parent, and exports `c27_run()`. The CUDA probe creates the context,
+  allocates a 64 KiB buffer filled with a `0xC2 0x7C` pattern, launches one
+  BF16 kernel from the issue-rate cubin so the GR context is resident, then
+  calls `c27_run()`.
+- Target: both 5090s, idle, stock driver, CUDA 13.
+- Steps:
+  - Read the mode getters, handles, SM error states, and MMU fault info.
+  - Enumerate mappings over the low VAS, the buffer's range, and a high range.
+  - Read surfaces at the buffer's VA and at candidate RM and engine VAs.
+  - Read memory with the single and batch commands against the buffer handle,
+    then against non-Memory controls.
+  - Scan the first 256 KiB of every readable handle for the FEAT, PLM, and
+    selector words.
+  - Suspend and resume the context in a separate run.
+- Args used:
+```text
+C27_DEVICE=0 ./run_c27.sh
+C27_DEVICE=1 ./run_c27.sh
+C27_SCAN=1 ./run_c27.sh
+C27_DUMP=1 ./run_c27.sh
+C27_SUSPEND=1 ./run_c27.sh
+```
+
+**Observed data.** Both cards returned the same values.
+
+| Command | Status | Data |
+|---|---|---|
+| `GET_HANDLES` | `0x56` [NOT_SUPPORTED](../specs/08_errors-and-logging.md#nv-status-codes) | `hChannel=0`, `hSubdevice=0` |
+| `GET_MODE_MMU_DEBUG` | `0` | `2` (disabled) |
+| `GET_MODE_ERRBAR_DEBUG` | `0` | `0` (disabled) |
+| `READ_ALL_SM_ERROR_STATES` | `0` | 100 SMs at SM 0 and 70 at SM 100, every word zero, no selector-pattern hit |
+| `READ_SINGLE_SM_ERROR_STATE` | `0` | All zero |
+| `GET_SINGLE_SM_DEBUGGER_STATUS` | `0` | All five flags false |
+| `READ_MMU_FAULT_INFO` | `0` | `count=0` |
+| `GET_MAPPINGS` | `0` | `count=0`, `hasMore=0` at every range |
+| `READ_SURFACE` | [`0x1f`](../specs/08_errors-and-logging.md#nv-status-codes) | Refused at the buffer VA and every candidate VA |
+| `READ_MEMORY` | `0` | Buffer handle returned the pattern at offset 0; `+0x1000` and `+0x100000` also read; a zero length is `0x1f` |
+| `READ_BATCH_MEMORY` | `0` / `0x1f` | One valid entry returned the pattern; a batch that includes the device handle returns `0x1f` |
+| `SUSPEND_CONTEXT` / `RESUME_CONTEXT` | `0` / `0` | `waitForEvent=1` |
+
+The mappings query returned nothing at the low 1 TiB, at the buffer's own
+4 MiB range, and at `0x7f0000000000`–`0x7f1000000000`. `READ_SURFACE` refused
+the buffer's VA as well as `0x93000000`, `0x01000000`, `0x04000000`,
+`0x20393000`, and the high ranges.
+
+`READ_MEMORY` is the one command that returned data. It reads Memory-class
+handles owned by the CUDA client:
+
+| Class | Name | Content |
+|---|---|---|
+| `0x3e` | `NV01_MEMORY_SYSTEM` | System memory with pushbuffer-like entries, e.g. `00200120c0ce00004020012000000000`; reads at 16 MiB |
+| `0x40` | `NV01_MEMORY_LOCAL_USER` | Local memory; zero in the probed window |
+| `0x50a0` | `NV50_MEMORY_VIRTUAL` | `0x5a` fill |
+| `0xde` | `RM_USER_SHARED_DATA` | One page, starting `f8010000...` |
+
+The non-Memory handles (device, channel, compute, debugger) return `0x1f`;
+null and handle `1` return [`0x1b`](../specs/08_errors-and-logging.md#nv-status-codes)
+`NV_ERR_INVALID_OBJECT_HANDLE`. An invalid length returns `0x1f`.
+
+The pattern scan read the first 256 KiB of every readable handle and looked
+for the [FEAT bank](../specs/03_register-map.md#feat-bank) words (`0x00c36180`,
+the `SS0`/`SS1` values, `0xfffffb8f`, `0x823804`, `0x823818`) and the [rate
+modifier](../specs/02_privilege-and-rate-control.md#the-rm-getter-and-the-host-view)
+(`0x504204`). No hit came back except the value `0x6`, which is a common
+pushbuffer operand.
+
+**Result.**
+
+- **Answer:** only a same-client memory read. The class does not reach secure or
+  engine memory. The SM-state and mode paths are live; the mapping and surface
+  paths return nothing; the memory reads are scoped to the session client's own
+  handles.
+- **What we learned:**
+  - The SM error state is readable for all 170 SMs and empty, so it carries no
+    selector copy. A call that runs past the SM count is refused.
+  - `GET_MAPPINGS` is a successful no-op on this path, and `READ_SURFACE`
+    refuses the caller's own buffer. The surface path looks up a DMA mapping
+    registered by the debugger client's parent, and the CUDA mapping is not in
+    that set.
+  - `READ_MEMORY` and `READ_BATCH_MEMORY` read any Memory object in the CUDA
+    client, including the channel's system-memory pushbuffer and the RM user
+    shared data. Those objects are not mapped by the CUDA API, so the class adds
+    a same-client observability surface. The handle database is the boundary,
+    and no other client is reachable.
+  - `SUSPEND_CONTEXT` and `RESUME_CONTEXT` work. No handle to the RM's
+    saved-state buffer is in the client database, so they add no read.
+  - The class remains the register-op observability path plus a same-client
+    memory reader
+    ([the debugger-class spec](../specs/10_debugger-class.md)).
+- **Related:**
+  - [The class allocation](#101-the-class-is-exposed-and-allocatable).
+  - [The register spaces](#102-the-context-and-descriptor-spaces-read).
+  - [The debugger-class spec](../specs/10_debugger-class.md).
+  - [The debugger write test](../experiments/01_software-register-writes.md#018-the-debugger-class-reads-the-bank-but-cannot-write-it).
+- **Open question:** whether the readable pushbuffer helps map the CUDA driver's
+  GR command stream for the context work. It does not point at the FEAT gate.

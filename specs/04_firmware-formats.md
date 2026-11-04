@@ -25,6 +25,10 @@
 - The bindata blobs are AES-encrypted by SEC2 in High-Secure mode with
   per-blob derived keys; each blob keeps a plaintext load descriptor
   ([the secure-data unit](../experiments/13_fwimage-map-and-bindata.md#134-the-fwsec-lic-secure-data-unit)).
+- The corpus keys are not device-bound and the bindata key is version-stable;
+  duplicated ucode copies carry a per-copy 16-byte seed, so the corpus is not
+  one key in ECB mode
+  ([the crypto-model compare](../experiments/16_crypto-model-compare.md)).
 - The FMC container is bound to the COT hash; a one-byte change draws `0x33`.
 - The FMC encryption mode and key remain unknown. The published MD5-IV key
   family is exhausted on GB202 under the tested modes.
@@ -162,15 +166,19 @@ the COT hash.
 The `0xF8` bytes before a signed container are:
 
 ```text
-publickey[97] || pad[7] || signature[96] || hash[48] || container
+publickey[104] || signature[96] || hash[48] || container
 ```
 
 | Field | Meaning |
 |---|---|
-| `publickey[97]` | Uncompressed P-384 point |
-| `pad[7]` | Alignment |
+| `publickey[104]` | Uncompressed P-384 point plus a 7-byte record tail |
 | `signature[96]` | `r \|\| s`, 48 bytes each |
 | `hash[48]` | SHA-384 over the entire container, header included |
+
+The record tail is zero on the GB202 and GB100 containers and non-zero on the
+other chips. An earlier reading split the record as a 97-byte key plus 7
+padding bytes; the generated arrays fix the record at 104 bytes
+([the container census](../experiments/16_crypto-model-compare.md#165-the-container-census-names-the-chips-and-the-keys)).
 
 The encoding is ECDSA P-384 over SHA-384. Both shipped signatures verify with
 OpenSSL:
@@ -180,13 +188,15 @@ openssl dgst -sha384 -verify pub.pem -signature sig.der container.bin
 # Verified OK
 ```
 
-Two keys ship in the retail package. See [the signature
-analysis](../experiments/07_plaintext-corpus.md#074-fmc-container-format-and-signature).
+Each chip signs with its own production and debug keys; GB202 and GB100 share
+theirs. See [the signature
+analysis](../experiments/07_plaintext-corpus.md#074-fmc-container-format-and-signature)
+and [the census](../experiments/16_crypto-model-compare.md#165-the-container-census-names-the-chips-and-the-keys).
 
 | Key | Signs |
 |---|---|
-| Production | 4 containers, including the production FMC and the linux-firmware FMC |
-| Debug | 2 containers, including the debug FMC |
+| GB202 production | The production FMC and the linux-firmware FMC; also verifies the GB100 production container |
+| GB202 debug | The debug FMC; also verifies the GB100 debug container |
 
 The signature section of the GSP-RM image is separate. `.fwsignature_gb20x` is
 `0x1000` bytes: a 20-byte header (`0x00020001`, size `0x8c8`, count `0x0c`,
@@ -472,10 +482,9 @@ pending release.
 - The FMC encryption mode and key remain unknown. The negative results cover the
   MD5-IV permutation family under the tested modes, not every AES mode or key
   source.
-- Whether the FMC ciphertext is image-wide or device-bound. The identical
-  ciphertext is within one image; no cross-card or cross-version comparison
-  exists ([the FMC
-  container](../experiments/07_plaintext-corpus.md#074-fmc-container-format-and-signature)).
+- The FMC and GspRmBoot keys stay untestable by comparison: every driver
+  version rebuilds both, so no cross-version ciphertext reuse exists
+  ([the shared-ciphertext check](../experiments/16_crypto-model-compare.md#164-the-fmc-and-gsprmboot-share-ciphertext-in-every-version)).
 - The GSP-RM module map comes from local decompilation; this spec publishes maps
   and short excerpts, not bulk decompiled code.
 - No firmware image, container, or key is included in this repo.
@@ -494,11 +503,12 @@ pending release.
 | Patched-image rejection | [05.2 patched image](../experiments/05_fmc-fsp-boot-inputs.md#052-patched-gsp-rm-image-rejected-by-the-fmc) |
 | Module map and decoder | [07.8 decoder audit](../experiments/07_plaintext-corpus.md#078-the-decoder-is-installed-by-the-hal) |
 | Test-key family and FMC search | [07.5 GA100 key test](../experiments/07_plaintext-corpus.md#075-the-ga100-test-key-does-not-fit), [07.10 FMC key search](../experiments/07_plaintext-corpus.md#0710-the-fmc-key-search-comes-back-negative) |
-| Inventory and availability | [07.1 PL3 components](../experiments/07_plaintext-corpus.md#071-pl3-components-in-the-driver-package), [07.4 FMC container](../experiments/07_plaintext-corpus.md#074-fmc-container-format-and-signature) |
+| Key binding, per-copy seeds, version stability | [16.1 card-independent vBIOS](../experiments/16_crypto-model-compare.md#161-the-encrypted-vbios-is-card-independent), [16.2 version-stable bindata](../experiments/16_crypto-model-compare.md#162-the-bindata-key-is-version-stable), [16.3 per-copy seed](../experiments/16_crypto-model-compare.md#163-duplicated-ucode-diverge-at-a-per-copy-seed) |
+| Inventory and availability | [07.1 PL3 components](../experiments/07_plaintext-corpus.md#071-pl3-components-in-the-driver-package), [07.4 FMC container](../experiments/07_plaintext-corpus.md#074-fmc-container-format-and-signature), [16.6 615 corpus](../experiments/16_crypto-model-compare.md#166-the-615-corpus-splits-and-resigns-the-fmc) |
 
 Related specs: [boot chain](01_boot-chain.md), [register map](03_register-map.md).
 Extraction and search tools: [FMC tools](../tools/fmc-tools/),
-[GSP-RM tools](../tools/gsp-rm-tools/).
+[GSP-RM tools](../tools/gsp-rm-tools/), [crypto compare](../tools/crypto-compare/).
 
 ## Terms
 

@@ -1157,7 +1157,7 @@ change at any point. The module-load control (before the unbind) was already
 - **Open question:** the exact devinit that performs the re-lock is not named.
   The [FLR poll](../experiments/01_software-register-writes.md#019-the-re-lock-moves-fuse_ss_plm-and-no-fsp-register)
   leaves the PMU or a hardware latch; [engine-map
-  completion](../IDEAS.md#engine-map-completion) is where the actor is named.
+  naming](../IDEAS.md#engine-naming-and-the-unmapped-bands) is where the actor is named.
 
 ## 05.22 vBIOS devinit table scan
 

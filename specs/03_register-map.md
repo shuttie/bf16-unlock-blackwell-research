@@ -3,8 +3,8 @@
 ## At a glance
 
 - **Scope.** The GB202 register blocks: chip and boot targets, FUSE/OTP, FEAT,
-  FECS, SM/GR, GSP Falcon, PRISCV, FSP, SEC2, PMU/CMS2, and the bad-read
-  sentinels.
+  FECS, SM/GR, GSP Falcon, PRISCV, FSP, SEC2, PMU/CMS2, the engine names,
+  and the bad-read sentinels.
 - **Bench.** Two RTX 5090s (GB202, `10de:2b85`), driver and GSP-RM 595.91.07,
   and two RTX PRO 6000 Blackwell references (same GB202 die, `10de:2bb1`; one
   power-on each, drivers 615.71.09 and 595.104.02). All offsets are BAR0 byte
@@ -34,6 +34,8 @@
 - The GSP Falcon and PRISCV blocks expose EMEM and a live ICD; the ICD reads the
   RM code segment, not secure memory.
 - FSP is not a debug-port target; SEC2 is present but empty on GB20x.
+- The aperture-table tags decode to RM engine types: `0x400000` is GR,
+  `0x848000`+ NVDEC, the `0x1c8000` quartet NVENC, `0x844000` OFA0.
 
 **In this spec.**
 
@@ -58,6 +60,8 @@
 - [FSP](#fsp): the FSP block and the PFSP EMEM channels.
 - [SEC2](#sec2): the SEC2 memory windows.
 - [PMU and CMS2](#pmu-and-cms2): the remaining blocks.
+  - [The engine-map census](#the-engine-map-census)
+- [Engine names](#engine-names): the decoded tag map.
 - [Bad-read sentinels](#bad-read-sentinels): the `0xBADF` values and their
   classes.
 - [Evidence map](#evidence-map)
@@ -190,6 +194,8 @@ corpus](../experiments/08_assessment-and-cross-checks.md#085-external-cross-part
 The CUDA debugger class (`GT200_DEBUGGER`, `0x83de`) reads the same words and
 its FEAT write is dropped by the same gate ([the debugger
 test](../experiments/01_software-register-writes.md#018-the-debugger-class-reads-the-bank-but-cannot-write-it)).
+The class allocation model and command surface are in [the debugger-class
+spec](10_debugger-class.md).
 
 The 5090 values above are the stock consumer map. The measured PRO 6000 reads
 the same `0x823800`/`0x823804` PLMs (`0xfffffb8f`) and `0x82380c`
@@ -369,7 +375,7 @@ return `0xBADF5040` except `0x40940c = 0x7ff`, so the block is not a falcon core
 | `0x00409500` | command data | `0`; carries address/size words for context commands; host- and GSP-writable |
 | `0x00409504` | command ID | `0xBADF5545`; read-blocked (PRI `0xBADF55`); host- and GSP-writable; a write executes the command |
 | `0x00409700`–`784` | adjacent config | `0x30`, `0x40001010`, `0x8097cbff`, `0x658bba81`, … under the open `0x4096d0` PLM |
-| `0x00409800` | completion/status | echoes the command ID for a known command; host- and GSP-writable; the GSP restores it to `1` |
+| `0x00409800` | completion/status | carries the command ID on completion (observed for `0x21`); host- and GSP-writable; the GSP restores it to `1` |
 | `0x00409b00` / `04` | DP/companion readout | `0x007e0f0a` in the first probe; `0x80000130` through the debugger class later; state-dependent |
 | `0x00409b74` / `b7c` | implemented | `0xe8` / `0xfffffbff`, PLM-shaped |
 | `0x00409b78` | implemented | `0` |
@@ -396,10 +402,9 @@ the [FECS and GR context experiments](../experiments/03_fecs-and-gr-context.md).
 
 The mailbox is under the fully open `0x4096d0` PLM, so the host (PL0) and GSP-RM
 (PL2) can both write it. The host writes the data to `0x409500` and the 12-bit
-command ID (`cmd & 0xfff`) to `0x409504`; a known command writes its ID to
+command ID (`cmd & 0xfff`) to `0x409504`; command `0x21` writes its ID to
 `0x409800` on completion. The ID read is blocked, so the completion slot is the
-only readback.
-The GSP-RM restores the slot to `1`.
+only readback. The GSP-RM restores the slot to `1`.
 
 An unassigned ID is not rejected cleanly: the FECS raises a ucode fatal error
 (`Xid 13`) and the driver marks the GPU for reset (`Xid 154`). The plaintext
@@ -461,10 +466,10 @@ map](../experiments/11_falcon-and-gr-window-probe.md#114-the-space-above-the-win
 |---|---|
 | `0x180000`–`0x19d000` | `0xBADF1002`/`0xBADF1100` alternating in `0x2000` windows |
 | `0x19e000`–`0x1bffff` | `0xBADF1100` |
-| `0x1c0000`–`0x1c4fff` | `0x4c`-byte header, then `0xBADF5040` |
+| `0x1c0000`–`0x1c4fff` | eight-word header (`0xffffff8f`, `0xffffffff`, `2`, `0xffffff00`, `1`, `0x100`, `0x80`), then `0xBADF5040` |
 | `0x1c5000`–`0x1c7fff` | `0xBADF1100` |
 | `0x1c8000`–`0x1cbcff` | `0xBADF1301` |
-| `0x1cd000`–`0x1d6fff` | `0xBADF5040`, zero pages at `0x1d0000` and `0x1d4000`, `0x804407` at `0x1ce000`, `0x1d2000`, `0x1d6000` |
+| `0x1cd000`–`0x1d6fff` | three engine falcons (`0x1cc000`, `0x1d0000`, `0x1d4000`, `HWCFG2 = 0x02900c00`) between `0xBADF5040` fill; the `0x1ce000`/`0x1d2000`/`0x1d6000` pages carry `0x804407` at the base and no falcon registers |
 | `0x1d7000`–`0x1e2000` | `0xBADF5040` |
 | `0x1e3000`–`0x1ef000` | `0xBADF1100` |
 | `0x1f2000`–`0x1f3fff` | the per-card table below |
@@ -474,7 +479,9 @@ map](../experiments/11_falcon-and-gr-window-probe.md#114-the-space-above-the-win
 | `0x22c000`–`0x22f9ff` | `0xBADF202B` |
 | `0x230000`–`0x2fffff` | markers, with `0xffffffcc` words between `0x290000` and `0x2b5000` |
 | `0x300000`–`0x4fffff` | the 2 MiB vBIOS PROM image, byte for byte |
-| `0x500000` | `0x87fc029f`, `0x08000000`, `0x00010000`, then `0xBADF5040` |
+| `0x500000` | sparse control block: `0x87fc029f`, `0x08000000`, `0x00010000` at the base, a PLM-shaped `0x0884cb8f` at `+0x300`, live words to `+0x3f0`; not a falcon |
+| `0x500000`–`0x1000000` | engine-falcon families and instance tables above; see [the engine-map census](#the-engine-map-census) |
+| above `0x1000000` | sentinels only at `0x10000` stride: nothing decodes |
 
 The ROM window is the same aperture that holds the flash at BAR0 + `0x300000`
 ([where the flash sits](../specs/05_vbios-and-devinit.md#where-it-sits)). A dense
@@ -496,8 +503,13 @@ runtime words; records 1–31 carry per-card values
 ([the block](../experiments/11_falcon-and-gr-window-probe.md#115-the-0x1f2000-block-is-a-per-card-table)).
 
 - 1,155 non-zero words; 567 differ between the two local cards.
-- The body is identical across a driver reload, so it is fused or built at
-  init. A reboot test is missing.
+- Across a cold boot the body persists and mutates in place: 603 words
+  identical, 552 changed in one to four bytes, the record-0 header fields
+  changed wholesale, and no record body rewritten ([the table across a cold
+  boot](../experiments/14_engine-map-census.md#144-the-per-card-table-persists-across-a-cold-boot)).
+  Not fused data, not per-boot randomness: retained per-card state refreshed
+  at power-on, the shape of training or calibration results.
+- The body is identical across a driver reload.
 - The sampled per-card words are not in either vBIOS dump or the GSP image, and
   the FEAT bank shares only generic constants.
 - GLOBAL and `GR_CTX` read the same words; `TPC`, `SM`, and `QUAD` return
@@ -662,16 +674,82 @@ the residual surface is in [boot chain](../specs/01_boot-chain.md).
 
 | Offset | Name | Value / note |
 |---|---|---|
-| `0x0010a000` | PMU guess | all `0xBADF5040`; wrong base |
+| `0x0010a000` | PMU legacy stub | all `0xBADF5040`; the historical base |
+| `0x008f4000` | PMU block | `HWCFG2 = 0x839387f7`, boot regs blocked, SEC2-shaped mailbox |
 | `0x008aa374` / `378` | OOBHUB CMS2 indirect read | 448/8192 nonzero, repeating 128-dword block |
 
 The debugger class reads all twelve standard FALCON offsets at `0x10a000` as
-`0xBADF5040`, confirming the base is wrong ([the falcon
+`0xBADF5040` ([the falcon
 probe](../experiments/11_falcon-and-gr-window-probe.md#111-the-falcon-blocks-answer-or-refuse)).
+The engine-aperture table in the RM image carries `0x10a000` and `0x8f4000`
+under one engine tag, which names `0x8f4000` as the PMU's GB202 block: a
+blocked secure core beside the FSP, answering the same `MAILBOX1` value as
+SEC2 ([the image names the PMU
+block](../experiments/14_engine-map-census.md#146-the-image-names-the-pmu-block)).
+The engine-type table confirms it independently: the same tag maps to
+engine type `0x34`, PMU ([the engine-type table names the rest of the
+map](../experiments/15_tag-decoder.md#152-the-engine-type-table-names-the-rest-of-the-map)).
 
-The PMU devinit is the leading candidate for the pre-lock FEAT writes, but its
-BAR0 base is not identified; that link is an analogy to Ada/Ampere. The writer
-timing is in [privilege and rate control](../specs/02_privilege-and-rate-control.md).
+The PMU devinit is the leading candidate for the pre-lock FEAT writes; its
+block is now named but no measured read path enters it. The writer timing is
+in [privilege and rate control](02_privilege-and-rate-control.md).
+
+### The engine-map census
+
+The falcon-signature census reads `HWCFG2`/`CPUCTL`/`ENGINE_RESET` at every
+`0x1000`-aligned base below `0x1000000` and probes the 64 MiB BAR0 top at
+`0x10000` stride ([the falcon-signature
+census](../experiments/14_engine-map-census.md#141-the-falcon-signature-census-completes-the-engine-map)).
+Above `0x1000000` every read answers a sentinel, so the map below is the
+whole map. The new blocks:
+
+| Family | Bases | Note |
+|---|---|---|
+| `HWCFG2 = 0x8181a7f7`, boot regs blocked | `0x848000` | NVDEC0 window, blocked ([engine names](#engine-names)) |
+| `HWCFG2 = 0x839387f7`, boot regs blocked | `0x8f4000` | the PMU block ([PMU and CMS2](#pmu-and-cms2)) |
+| `HWCFG2 = 0x03908fec`, `DMACTL = 0x81` | `0x854000` | NVDEC3 window, blocked |
+| `HWCFG2 = 0x02100c00`, `CPUCTL = 0x10` | `0x40c000`, `0x42f000`, `0x50f000`–`0x5af000` | 12 instances at `0x10000` stride: the per-GPC blocks under GR |
+| `HWCFG2 = 0x02900c00`, `CPUCTL = 0x10` | `0x1cc000`, `0x1d0000`, `0x1d4000`, `0x844000`, `0x9a4000`, `0x9d8000`, `0x9dc000` | NVENC1-3, OFA0 (`0x844000`), one NVJPG window; `0x9a4000`/`0x9dc000` unmapped in the copies |
+| `HWCFG2 = 0x00100c00`, `CPUCTL = 0x10`/`0x50` | `0x651000`, `0x9a6000`, `0xa00000`–`0xa0e000` | `0x651000` reads `MAILBOX1 = 0xabcd1234`; not in the aperture table |
+| `HWCFG2 = 0x03920c00`, blocked | `0xd40000`–`0xd4c000` | four instances at `0x4000` stride; not in the aperture table |
+
+Every engine falcon reads `UCODE_ID = ENGIDMASK = 0xffffffff` (ACR-loaded, no
+BROM id), so the vBIOS target ids cannot be matched through this register
+([the naming
+pass](../experiments/14_engine-map-census.md#142-the-naming-pass-splits-the-candidates-into-three-classes)).
+No new block widens host access: config visible, boot and vector registers
+blocked, the same split as the documented cores. The families are named in
+[engine names](#engine-names); the PMU base question is closed in
+[PMU and CMS2](#pmu-and-cms2). The two read windows that crash GSP-RM
+(`0x42f900`–`0x431004`, and the `0x525200` batch) are in [the hazards](07_memory-and-host-access.md#fault-behavior-and-sentinels).
+
+## Engine names
+
+The aperture table's tags decode to the RM engine-type enum through a static
+57-row table in the image ([the engine-type table names the rest of the
+map](../experiments/15_tag-decoder.md#152-the-engine-type-table-names-the-rest-of-the-map)).
+The named windows on this part:
+
+| Window | Engine | Note |
+|---|---|---|
+| `0x400000` | GR0 | the FECS space; doorbells at `0x409500`/`0x409800` |
+| `0x50f000`–`0x5af000` | per-GPC blocks | twelve at `0x10000` stride under GR |
+| `0x104000` | COPY0 | first of twenty slots |
+| `0x848000`–`0x854000` | NVDEC0–3 | four windows in this SKU's copy |
+| `0x1c8000`–`0x1d4000` | NVENC0–3 | the quartet at `0x4000` stride |
+| `0x844000` | OFA0 | live falcon, `HWCFG2 = 0x02900c00` |
+| `0x9c0000`–`0x9f8000` | NVJPEG0–7 | listed in the eight-window SKU copy |
+| `0x120000` | SW | the SW engine's one window in this copy |
+| `0x840000` | SEC2 | [SEC2](#sec2) |
+| `0x8f4000` | PMU | [PMU and CMS2](#pmu-and-cms2) |
+| `0x110000` | GSP | [GSP Falcon](#gsp-falcon) |
+
+Four more windows belong to non-engine classes whose descriptors sit in the
+encrypted bindata: `0x100000`/`0x9a0000`/`0x140000`/`0x13b000` under one tag,
+`0x1000`, `0x260000`, and `0x20000` ([four windows are not
+engines](../experiments/15_tag-decoder.md#153-four-windows-are-not-engines-and-their-names-are-encrypted)).
+TSEC, HOST, DPU and FBFLCN exist as engine types with instance counts but own
+no window in any copy of the table.
 
 ## Bad-read sentinels
 
@@ -737,8 +815,15 @@ The error-code taxonomy is in
   power-on per card, and the words differ across cards.
 - Open: whether `0x823800` is an alias or a second PLM; the exact meaning of
   `0x8238b0` (`0x12800541` on the 5090, `0x1c5f331f` and `0x0db4b1c3` on two PRO
-  6000s); the real PMU BAR0 base; the 16-byte constant at `0x8f0ab0`; the
+  6000s); the engine names for the census families and which candidate is the
+  PMU; the 16-byte constant at `0x8f0ab0`; the
   128-dword CMS2 table; whether the SEC2 DMEM is larger than 8 KB or masked.
+- The census map is complete below `0x1000000` for the falcon signature, and
+  at `0x100` stride for `0x0`–`0x42f804` and `0x500000`–`0x525100`. The bands
+  `0x42f804`–`0x500000` and `0x525200`–`0x1000000` are unscanned: the first
+  contains a measured GSP-crash read window, and the map run died at the
+  second ([the read that crashes
+  GSP-RM](../experiments/14_engine-map-census.md#143-a-read-through-the-debugger-path-crashes-gsp-rm)).
 - The exact function of `0x137200` is open; the value and the refused PL2 access
   place it in the FECS/GR privilege block, not the FEAT bank.
 - The 5090's `0x820084` read is from one card (`41:00.0`); every other
