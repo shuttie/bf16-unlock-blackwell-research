@@ -212,11 +212,13 @@ primitive as PL3 code execution in the security firmware ([the external
 cross-check](experiments/08_assessment-and-cross-checks.md#0811-the-register-route-is-a-pl3-problem)).
 The cold-boot FMC parser map is measured ([the parser
 group](experiments/09_fmc-cold-boot-parsers.md)): the boot inputs are bounded or
-exact, and the image bytes are authenticated. Next is the suspend/resume
-descriptor and page table, then the FSP framing. The vBIOS app `0x23` tail and
-the per-SM probes follow. The debugger command census ran: the non-register
-commands do not reach engine or secure memory, and the class remains an
-observability path ([the command
+exact, and the image bytes are authenticated. Next is offline work on the
+decrypted Ada debug booters, which names the field class the FMC sweep should
+probe, and a runtime check of the RM's own speed-select override; the reboot
+budget goes to the signature-section variants and the GC6 re-run after that
+([Open leads](IDEAS.md#the-index)). The debugger command census ran: the
+non-register commands do not reach engine or secure memory, and the class
+remains an observability path ([the command
 census](experiments/10_debugger-class-and-fecs-ucode.md#104-the-non-register-commands-do-not-open-a-read-path)).
 The information leads — the timed port capture, the engine map, the RM census,
 cross-version diffing, and the crypto model — are in [Open

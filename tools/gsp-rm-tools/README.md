@@ -47,6 +47,8 @@
 | `DecompileAll.java`, `ParallelDecompileAll.java` | Bulk decompilation |
 | `ghidra.sh` | Serialized read-only `analyzeHeadless` wrapper |
 | `refscan.py` | Raw-byte reference scan for RISC-V `JAL`, `AUIPC+ADDI`, `LUI+ADDI`, and literals |
+| `HulkDecompile.java` | One-shot region disassembly, function creation, and bulk decompilation |
+| `RegionDump.java` | Dump every defined instruction in a range as TSV, with gap markers |
 | `module_split.py`, `module_split_v2.py` | Seed and Louvain split of the decompiled dump into module files |
 | `annotate_strings.py`, `community_probe.py` | String annotation and community diagnostics |
 | `build_id_table.py` | Build the log metadata-ID table |

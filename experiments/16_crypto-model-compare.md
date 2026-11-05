@@ -34,6 +34,15 @@
 - Driver 615.78.08 moves the engine ucode into a new `NVUCODES` container and
   signs the production FMC image as the debug FMC, byte-identical
   ([16.6](#166-the-615-corpus-splits-and-resigns-the-fmc)).
+- **Every corpus encrypts alone:** within one driver version, no ciphertext
+  block crosses a corpus boundary — not between chips that share signing
+  keys, not between flavors, not between the module containers and the
+  GSP-RM image ([16.7](#167-no-ciphertext-crosses-a-corpus-boundary)).
+- **No shipped window is the FMC key:** every byte-offset 16-byte window of
+  318 MB of shipped material — 336,307,381 candidates — fails to decrypt
+  either GB202 FMC container under four mode paths, and the top 48
+  candidates fail the full-code RISC-V walk
+  ([16.8](#168-no-shipped-window-is-the-fmc-key)).
 
 **What it did not find.**
 
@@ -43,6 +52,9 @@
 - No cross-version ciphertext reuse in the FMC or GspRmBoot: every version
   rebuilds both, so their keys stay untestable by this method
   ([16.4](#164-the-fmc-and-gsprmboot-share-ciphertext-in-every-version)).
+- No ECB-class repetition in any corpus and no seed structure in the FMC or
+  vBIOS corpora: their key searches reduce to placements and build constants
+  ([16.7](#167-no-ciphertext-crosses-a-corpus-boundary)).
 
 ## Experiments
 
@@ -54,6 +66,8 @@
 | 16.4 | [The FMC and GspRmBoot share ciphertext in every version](#164-the-fmc-and-gsprmboot-share-ciphertext-in-every-version) | Per-component reset, three times |
 | 16.5 | [The container census names the chips and the keys](#165-the-container-census-names-the-chips-and-the-keys) | Five chips, per-chip keys |
 | 16.6 | [The 615 corpus splits and resigns the FMC](#166-the-615-corpus-splits-and-resigns-the-fmc) | `NVUCODES` split, debug equals production |
+| 16.7 | [No ciphertext crosses a corpus boundary](#167-no-ciphertext-crosses-a-corpus-boundary) | Disjoint corpora, no ECB anywhere |
+| 16.8 | [No shipped window is the FMC key](#168-no-shipped-window-is-the-fmc-key) | 336 M windows, all null |
 
 ## 16.1 The encrypted vBIOS is card-independent
 
@@ -121,7 +135,7 @@ PROM head 0x0..0x38000: 790 differing bytes, 46 ranges,
 - **Related:**
   - [The version-stable bindata](#162-the-bindata-key-is-version-stable)
     answers the same question across builds.
-  - The vBIOS ucode key search lead in IDEAS is un-gated by this record.
+  - The corpus key search lead in IDEAS is un-gated by this record.
 
 ## 16.2 The bindata key is version-stable
 
@@ -315,6 +329,8 @@ cross-version (570 vs 595 vs 615, GB202 production):
     defined the region split.
   - [The 615 corpus](#166-the-615-corpus-splits-and-resigns-the-fmc)
     changes what "production" and "debug" mean for this pair.
+  - [16.7](#167-no-ciphertext-crosses-a-corpus-boundary) confirms the
+    region identity inside the 595 module and locates the second copy.
 
 ## 16.5 The container census names the chips and the keys
 
@@ -434,4 +450,195 @@ FMC arrays (GB202):
 - **Related:**
   - [The fwimage map](../experiments/13_fwimage-map-and-bindata.md#131-the-libos-manifest-and-the-module-chain)
     describes the 595 layout this supersedes.
-  - The vBIOS ucode key search lead in IDEAS inherits the un-gated status.
+  - The corpus key search lead in IDEAS inherits the un-gated status.
+
+## 16.7 No ciphertext crosses a corpus boundary
+
+**Question.** Do any two encrypted corpora in one driver version share
+ciphertext, and does any corpus repeat itself at shifted offsets?
+
+**Why.**
+
+- The [corpus key search](../IDEAS.md#corpus-key-search) needed its mode
+  question answered before any family sweep: shared blocks across chips
+  would prove ECB and deliver known plaintext, and internal shifted
+  repetition would mark ECB-class position independence.
+- [The container census](#165-the-container-census-names-the-chips-and-the-keys)
+  left GB202 and GB100 sharing both signing keys with no body-level
+  comparison behind it — the sharing might have reached the body keys.
+- What it would give: the mode set for the oracle design, the key-scope map
+  across corpora, and the cheapest key-search shortcut either opened or
+  closed.
+
+**Method.**
+
+- Tools: a magic-scan extractor with SHA-384 envelope verification;
+  pairwise block joins with an offset-delta histogram; a shifted-segment
+  test extending every duplicated block to its maximal same-delta run; a
+  cross-corpus block census. Ad-hoc offline passes, standard library only.
+- Target: driver 595.91.07 — the thirteen module containers, the GSP-RM
+  image, and the four vBIOS bodies in the 1 MiB flash image; offline.
+- Steps:
+  - Extract the thirteen containers from the module by magic scan, verify
+    every envelope hash, and identify them by size twins, key groups, and
+    embedded content.
+  - Join every same-flavor pair across chips, the same-chip flavor pair,
+    and the confidential-compute builds; classify matches by offset delta
+    and body component.
+  - Run the shifted-segment test (runs at or above `0x80` B) over each FMC
+    body and the whole 595 bindata.
+  - Census every non-uniform 16-byte block across all eighteen corpora and
+    count the values that appear in more than one.
+  - Locate the four vBIOS bodies, map the two cards' differing bytes, and
+    read the fields around each body.
+
+**Observed data.**
+
+```text
+thirteen containers, all envelopes verify (offset, body, code, flags, pkey):
+  gb202_prod 0x58f598 0x46200 0x37000 0x104 048bf118
+  gb202_dbg  0x691480 0x46200 0x37000 0x104 04d30bd5   (the c09 container)
+  gb100_prod 0x604450 0x30500 0x25400 0x104 048bf118
+  gb100_dbg  0x706338 0x30500 0x25400 0x104 04d30bd5
+  cc_a_prod 0x4c3c28 0x3ec00 0x33900 0x104 048bf118
+  cc_b_prod 0x502968 0x2fc00 0x24900 0x104 048bf118
+  gb10b pair 0x5d5b10/0x6d79f8 flags 0x101; four more single-key pairs
+joins, matched non-uniform blocks out of ~18k per body:
+  gb202_prod vs gb100_prod: 1;  gb202_dbg vs gb100_dbg: 1
+  gb202_prod vs gb202_dbg:  0;  every other pair: 0 or 1
+  the shared values are two flavor-tagged structured constants:
+    prod 4200000055000000..  dbg 42000000aa000000..
+cross-corpus census (bindata, 13 bodies, 4 vBIOS bodies):
+  3,568,551 distinct non-uniform blocks; 2 values in more than one corpus
+shifted segments >= 0x80 B at any delta:
+  none inside gb202_prod, gb202_dbg, gb100_prod, cc_a_prod, gb10b_prod
+  none anywhere in bindata_595
+vBIOS bodies (flash1m): app07 0x6fe40+0x20200, app19 0x90040+0x21b00,
+  app15 0xb1c80+0x5b00, app23 0xb780c+0x1e200
+  1,713 bytes differ between the two cards: head metadata, app23's
+  plaintext tail, and 18 bytes in app07's descriptor neighborhood
+  (0x6fc51..0x6fc62); all four encrypted bodies byte-identical
+  tgt01 bodies share exactly an 8-byte prefix; both headers are load-map
+  records carrying the 0x6d ID-word family of the bindata generic headers
+module vs GSP-RM image: gb202_prod body matches 0 blocks in the fwimage
+boot image: the module carries GspRmBoot byte-exact twice — as its own
+  array at 0x90afb0 (0x47000 B) and re-ordered inside the gb202_prod body;
+  the container's code (0x37000) is a byte-exact prefix of the boot
+  array's code (0x37e00), data and manifest identical
+```
+
+**Result.**
+
+- **Answer:** no two corpora in the 595 package share ciphertext, and no
+  corpus repeats itself at shifted offsets; every encrypted corpus in one
+  driver version encrypts alone.
+- **What we learned:**
+  - Signing-key sharing does not reach body crypto: GB202 and GB100 share
+    both signing keys and zero body blocks. The cross-chip shortcut in the
+    corpus key search is closed — a key must be found per corpus.
+  - ECB stands nowhere. [The per-copy seed](#163-duplicated-ucode-diverge-at-a-per-copy-seed)
+    ruled out one ECB key for the bindata; the absence of any repeated
+    segment inside any single copy now rules out ECB under per-copy
+    derived keys as well. The bindata oracle must consume the seed: CBC
+    with it as IV, CTR with it as nonce, XTS with it as tweak, or a
+    derivation.
+  - The FMC and vBIOS corpora carry no seed structure. The 28-byte
+    high-entropy tail before each vBIOS body varies per card where the
+    ciphertext does not (app07), so it is metadata or a MAC, not an
+    encryption seed; vBIOS key material is card-independent, which
+    [16.1](#161-the-encrypted-vbios-is-card-independent) already implied.
+  - [16.4](#164-the-fmc-and-gsprmboot-share-ciphertext-in-every-version)
+    is confirmed at module level for 595 and its mechanism is now
+    physical: the module stores the boot image twice, and the container's
+    regions are byte-identical to the boot array's at different offsets,
+    so the per-region reset is real, not a packaging artifact. The boot
+    array carries `0xe00` of code beyond the container's code component.
+  - The module containers and the GSP-RM image are disjoint corpora; the
+    fwimage's only encrypted payload is the bindata.
+- **Related:**
+  - [The corpus key search](../IDEAS.md#corpus-key-search) ran this as its
+    Phase 1; the phase-2 window scan and the phase-3 families follow.
+  - [The generic-header blob directory](../experiments/13_fwimage-map-and-bindata.md#135-the-generic-header-blob-directory)
+    named the ID-word family the vBIOS headers share.
+  - [The vBIOS ucode bodies](../experiments/10_debugger-class-and-fecs-ucode.md#103-the-vbios-ucode-bodies)
+    located the four bodies this record maps across cards.
+
+## 16.8 No shipped window is the FMC key
+
+**Question.** Does any 16-byte window of the shipped material decrypt an
+FMC code component?
+
+**Why.**
+
+- The [corpus key search](../IDEAS.md#corpus-key-search) ordered its phases
+  so the cheapest hypothesis runs first: if a body key ships verbatim in
+  the package — in a header, an envelope, a seed, a table — a window scan
+  finds it in minutes.
+- [16.7](#167-no-ciphertext-crosses-a-corpus-boundary) closed key sharing
+  across corpora but not a stored key; the bindata keys are derived inside
+  SEC2 ([the secure-data
+  unit](../experiments/13_fwimage-map-and-bindata.md#134-the-fwsec-lic-secure-data-unit)),
+  while the FMC key's provenance is unknown.
+- What it would give: the debug FMC decrypt, which feeds the
+  [signature-section sweep](../IDEAS.md#fmc-signature-section-sweep), with
+  no family design at all.
+
+**Method.**
+
+- Tools: the [FMC tools](../tools/fmc-tools/) window scanner and RISC-V
+  verifier; the parcel log-probability table built from the GSP-RM code
+  segment.
+- Target: both GB202 FMC containers from 595.91.07, the debug container
+  (`c09`) and the production container; offline.
+- Steps:
+  - Collect the shipped material: the module, the GSP-RM image, both
+    extracted bindatas, the 570/595/615 container and boot corpus, both
+    cards' 1 MiB and 2 MiB vBIOS images, two board ROMs, and three public
+    reference ROMs — 318 MB.
+  - Try every byte-offset 16-byte window as an AES-128 key against the
+    first blocks of each code component under four scoring paths: ECB
+    (blocks 0–4), CBC with unknown IV (blocks 1–4, IV-insensitive), and
+    CTR with counter start 0 and 1.
+  - Calibrate the scorer on real GSP code and on random bytes, then pass
+    the top 24 candidates per target through the full-code RISC-V walk.
+- Args used:
+```bash
+./window_scan riscv_logp_q.bin containers/c09.body <318 MB of package files>
+python3 fmc_riscv_verify.py --hits hits.txt --container containers/c09.bin
+```
+
+**Observed data.**
+
+```text
+windows: 336,307,381 per target; code component 0x37000 per container
+calibration (5-block scores): GSP code mean -659 (max -320),
+  random bytes mean -1483 (max -1397)
+gb202_dbg best scores: ecb -1326, cbc-anyIV -1038 (4-block), ctr0 -1313,
+  ctr1 -1324
+gb202_prod best scores: ecb -1314, cbc-anyIV -1037, ctr0 -1314, ctr1 -1329
+full-code walk, top 24 per target: all 48 reject at 0.086-0.090 invalid
+  instructions; compiled RISC-V walks at ~0.0003
+```
+
+**Result.**
+
+- **Answer:** no 16-byte window of any shipped artifact decrypts either
+  GB202 FMC container under ECB, CBC with any IV, or CTR with counter
+  start 0 or 1. The key does not ship verbatim in the package.
+- **What we learned:**
+  - With [16.7](#167-no-ciphertext-crosses-a-corpus-boundary), the FMC key
+    is now known to be neither a package literal nor shared with any other
+    corpus. What remains for that target are the structured families: the
+    csecret placements and the build constants.
+  - The scan's scoring separates cleanly — the best of 336 million random
+    keys stays 600 log-probability units below the real-code mean — so the
+    same harness answers any future candidate list; Phase 3 families run
+    through it by materializing candidates as a file.
+  - The vBIOS and bindata corpora still need this pass, but their bodies
+    are falcon code, not RISC-V, so the scan gates on a falcon-validity
+    oracle first.
+- **Related:**
+  - [The negative key search](../experiments/07_plaintext-corpus.md#0710-the-fmc-key-search-comes-back-negative)
+    exhausted the permutation family on the same containers.
+  - [The corpus key search](../IDEAS.md#corpus-key-search) ran this as its
+    Phase 2 at the FMC corpus.

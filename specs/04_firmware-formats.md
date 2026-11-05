@@ -49,6 +49,7 @@
   - [Signed-image boundary](#signed-image-boundary)
   - [Secure-data blobs](#secure-data-blobs)
   - [Module map](#module-map)
+  - [FWSEC-LIC unit map](#fwseclic-unit-map)
 - [Firmware inventory](#firmware-inventory)
 - [FMC encryption and key search](#fmc-encryption-and-key-search)
   - [The four layers](#the-four-layers)
@@ -370,6 +371,21 @@ decoder audit](../experiments/07_plaintext-corpus.md#078-the-decoder-is-installe
 The reference audit is a useful trap: a scan that only looks for literal
 addresses misses the negative 20-bit `auipc` immediate. Five materializations sit
 inside the initializer. Absence of a literal is not evidence of dead code.
+
+### FWSEC-LIC unit map
+
+The certificate-vocabulary strings belong to a three-part unit. The head
+(`0x0130ca64`–`0x0130f78c`, 93 small functions) decodes error codes through a
+relative-offset switch and logs them; the middle
+(`0x0130f78c`–`0x0134bc74`, about 200 functions) is a descriptor-driven loader
+with version-gated stride tables and a `0x930`-byte staging object; the tail
+(`0x0134bc74`–`0x01351000`) is a shared RM log-thunk pool holding one 34-byte
+report unit per error string, every unit tail-jumping into the RM-task log
+writer. The unit takes 153 direct-call entries from the surrounding RM and
+carries no certificate parsing, no FEAT-family register constant in any
+immediate form, and no DEVID list; the reader, `3AES` verify, and SEC2 opcode
+interpreter the error strings name live in encrypted code. See [the handler
+resolution](../experiments/26_fwseclic-handler-resolution.md).
 
 ## Firmware inventory
 

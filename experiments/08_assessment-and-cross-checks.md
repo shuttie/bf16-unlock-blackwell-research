@@ -590,7 +590,7 @@ F: 29 FECS command IDs; no selector; no 0x504204 writer.
 | FEAT consumers | `FUN_ram_0160f1bc` writes [`0x381c`/`0x3820`](../specs/03_register-map.md#ss0-and-ss1) through `FUN_ram_01c60868`; installed at `obj+0x938` for variants not in `{5..9}`; the helper's fallback is a direct BAR0 MMIO store, but there is no visible 4-argument caller. Bit 6 is the alternate ninth byte. | CLOSED-STATIC (method exists; unreachable/PLM-blocked) |
 | Static-info controls | The control table confirms V1 internal `0x48` (8×9), V2 internal `0x3fe0`, public V1 `0x20`, V2 `0x7fc`; the getter is a copy-out/cache. Handler pointers are 2 bytes early, so the reader trace is partial. | PARTIAL |
 | Decoder selection | `{5..9}` twin confirmed by `0x3e0 >> variant & 1`. `0xC38` is variant-dependent: `FUN_ram_01615a40` (DP `[30:28]`) or `FUN_ram_015ffbd0` (bit 6). GB202 is `0x02`, not in `{5..9}`, so it installs `FUN_ram_015ffae8` / [`0x3818`](../specs/03_register-map.md#readout-decode). | CLOSED-STATIC |
-| Registry consumers | `config+0xEA8/0xEAC` are read by `FUN_ram_0216d680` and `FUN_ram_0217f718`, reduced to booleans, and written to a GR context/ucode descriptor, not MMIO; EA8 is gated by `+0xEA4`. [`0x504204`](../specs/03_register-map.md#sm-and-gr) has no writer. | CLOSED-STATIC |
+| Registry consumers | `config+0xEA8/0xEAC` are read by `FUN_ram_0216d680`, which packs them into a GR context descriptor word at `obj+0x20` (EA8 to bit 17, only when `+0xEA4` is nonzero), and by `FUN_ram_0217f718`, which writes `(EA4 ? EA8 : 0)` to the GR ucode image header at `+0x8`. Both are memory stores, not MMIO. [`0x504204`](../specs/03_register-map.md#sm-and-gr) has no writer. | PARTIAL (runtime gate unmeasured) |
 | FSP surface | Only COT [`0x14`](../specs/01_boot-chain.md#fsp-command-surface), caps `0x16`, and clock `0x20` are live; PRC `0x13` is GH100-only; nine NVDM types are unused. No length field; the host controls TX length via `QUEUE_TAIL`; response identity is unchecked. | CLOSED-STATIC |
 | GR init | 29 FECS command IDs, all init/context/feature; no selector; no per-SM rate loop; no `0x504204` writer. | CLOSED-STATIC |
 | GSP log | See the [decoder](#086-gsp-log-decoding-without-the-metadata-elf). | CLOSED-STATIC |
@@ -607,8 +607,14 @@ F: 29 FECS command IDs; no selector; no 0x504204 writer.
     unreachable from the visible call graph and unusable at PL2.
   - [The registry audit](../experiments/02_registry-and-static-audit.md) had the
     producer wrong: it is `FUN_ram_015ce3e8`, not `0x015cf1be` (an interior
-    address). The keys are inert because the value is boolean-ized and EA8 is
-    gated by `+0xEA4`, not because the consumer is absent.
+    address). The keys were inert in the hardware sweep; the static reading is
+    that the value is boolean-ized and EA8 is gated by `+0xEA4`, not that the
+    consumer is absent.
+  - The registry consumers are memory stores to a context descriptor and to the
+    GR ucode image header, and both take EA8 only when `+0xEA4` is nonzero.
+    Whether `EA4` is nonzero when the consumer runs on a retail card is
+    unmeasured; [the speed-select
+    lead](../IDEAS.md#rm-speed-select-override-path) instruments it.
   - No RM code writes `0x504204`; the value 5 comes from firmware/devinit or a
     context-switch/golden-context restore.
   - Bit 6 of `FEAT_READOUT_1` is the alternate ninth byte

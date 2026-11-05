@@ -1,0 +1,61 @@
+diff --git a/src/nvidia/arch/nvalloc/unix/src/osmemdesc.c b/src/nvidia/arch/nvalloc/unix/src/osmemdesc.c
+index 17328f2d..5096e1f3 100644
+--- a/src/nvidia/arch/nvalloc/unix/src/osmemdesc.c
++++ b/src/nvidia/arch/nvalloc/unix/src/osmemdesc.c
+@@ -520,10 +520,29 @@ osCreateOsDescriptorFromIoMemory
+     physAddrRange.min = *base;
+     physAddrRange.max = *base + *pLimit;
+ 
+-    rmStatus = osCheckGpuBarsOverlapAddrRange(physAddrRange);
+-    if (rmStatus != NV_OK)
+-    {
+-        return rmStatus;
++    // BF16 research: the experiment aims a peer GPU's DMA engine at this
++    // GPU's BAR1 window, which the stock check below refuses by design.  The
++    // bypass is off by default and only reachable as root; enable it with the
++    // BF16PeerBarIoMem=1 registry key.
++    {
++        NvU32 bf16AllowPeerBarIoMem = 0;
++        osReadRegistryDword(pGpu, "BF16PeerBarIoMem", &bf16AllowPeerBarIoMem);
++        if (bf16AllowPeerBarIoMem)
++        {
++            NV_PRINTF(LEVEL_ERROR,
++                      "BF16: osCheckGpuBarsOverlapAddrRange bypassed for "
++                      "phys range 0x%llx-0x%llx\n",
++                      (unsigned long long)physAddrRange.min,
++                      (unsigned long long)physAddrRange.max);
++        }
++        else
++        {
++            rmStatus = osCheckGpuBarsOverlapAddrRange(physAddrRange);
++            if (rmStatus != NV_OK)
++            {
++                return rmStatus;
++            }
++        }
+     }
+ 
+     //
+diff --git a/src/nvidia/src/kernel/gpu/bus/arch/turing/kern_bus_tu102.c b/src/nvidia/src/kernel/gpu/bus/arch/turing/kern_bus_tu102.c
+index f06fb095..a765d3f9 100644
+--- a/src/nvidia/src/kernel/gpu/bus/arch/turing/kern_bus_tu102.c
++++ b/src/nvidia/src/kernel/gpu/bus/arch/turing/kern_bus_tu102.c
+@@ -611,6 +611,18 @@ kbusEnableStaticBar1Mapping_TU102
+     NV_PRINTF(LEVEL_INFO, "Static bar1 mapped offset 0x%llx size 0x%llx\n",
+                            bar1Offset, bar1MapSize);
+ 
++    /* BF16 research: the static BAR1 window in FB and system-address terms.
++     * A BAR1 offset X reads FB offset startOffset + X. */
++    NV_PRINTF(LEVEL_ERROR,
++              "BF16: BAR1MAP gpu=%u physFb=0x%llx start=0x%llx size=0x%llx "
++              "aperture=0x%llx busAddr=0x%llx\n",
++              pGpu->gpuInstance,
++              (unsigned long long)pGpu->busInfo.gpuPhysFbAddr,
++              (unsigned long long)bar1Offset,
++              (unsigned long long)bar1MapSize,
++              (unsigned long long)pKernelBus->bar1[gfid].apertureLength,
++              (unsigned long long)bar1BusAddr);
++
+     return NV_OK;
+ 
+ cleanup_bus_map:

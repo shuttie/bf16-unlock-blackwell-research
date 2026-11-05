@@ -53,6 +53,7 @@
 | `key37_cuda.cu` | CUDA search: KAT, first-block FMC oracle, RISC-V-validity oracle |
 | `key37_search.py`, `key37_search2.py`, `key37_scan.py` | Structured CPU candidate searches derived from the MD5 IV |
 | `build_riscv_logp.py` | Builds the 16-bit parcel log-probability table used by the RISC-V oracle |
+| `window_scan.c` | AES-NI scan: every byte-offset 16-byte window of a file set (or a materialized candidate list) as a key, four mode paths, logp-scored |
 | `fmc_key_test.py` | Tries one candidate key across ECB/CBC/CTR plus a header-IV variant |
 | `fmc_hits_test.py` | Scores first-block oracle hits against FMC/container headers |
 | `fmc_fullbody.py` | Decrypts the whole body for a hit and tests for a parseable image |
@@ -117,6 +118,8 @@ CPU search:
 ```text
 gcc -O3 -march=native -maes -msse4.1 -fopenmp \
     -o key37_factoradic key37_factoradic.c
+gcc -O3 -march=native -maes -msse4.1 -fopenmp \
+    -o window_scan window_scan.c
 ```
 
 CUDA oracle (CUDA 13, RTX 5090 = `sm_120`). The `-U_GNU_SOURCE` avoids a
@@ -183,6 +186,18 @@ Verify a hit file against the whole code component:
 python3 fmc_riscv_verify.py --hits out/riscv_c09/fmc_hits.txt \
     --container containers/c09_00691480_046200.bin
 ```
+
+Window scan: every 16-byte window of a set of files as a key against the
+debug FMC code component, four mode paths, FIPS-197 selftest on startup:
+
+```text
+./window_scan riscv_logp_q.bin containers/c09_00691480_046200.body \
+    nvidia.ko gsp_fwimage.bin
+```
+
+A materialized candidate list (Phase 3 families) runs the same way: write
+the candidates back to back into one file and pass it as the only window
+file.
 
 The runners default to `key37_cuda` and `containers/` beside the script; set
 `BIN`, `CONTAINERS`, or `OUT` to override. Outputs go to `out/` by default.

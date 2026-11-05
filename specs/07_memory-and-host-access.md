@@ -60,11 +60,20 @@ mechanism is the PRAMIN window: 64 KiB at BAR0 `0x700000`. The base is moved wit
 `kbusSetBAR0WindowVidOffset` and restored after the read. The window writes and
 reads back its base; a read at the non-WPR heap returns real data.
 
-**BAR1.** BAR1 is not a one-to-one window onto framebuffer physical addresses. It
-is bound to a BAR1 VAS, and its offsets are VAS offsets. During the GSP boot the
-VAS does not exist yet: `kbusInitBar1` runs in `kbusStatePostLoad` inside
-`gpuStateLoad`, after `kgspInitRm`. Creating a mapping before that point faults
-on a NULL PTE array.
+**BAR1.** The dynamic BAR1 mapping is not a one-to-one window onto framebuffer
+physical addresses. It is bound to a BAR1 VAS, and its offsets are VAS offsets.
+During the GSP boot the VAS does not exist yet: `kbusInitBar1` runs in
+`kbusStatePostLoad` inside `gpuStateLoad`, after `kgspInitRm`. Creating a
+mapping before that point faults on a NULL PTE array.
+
+With the static BAR1 mapping deployed (the [P2P
+enabler](../experiments/27_p2p-peer-access.md#271-peer-to-peer-is-live-on-the-bench-pair)),
+the window is one-to-one with framebuffer over the client address space: BAR1
+offset `X` reads FB offset `X` for `X` in `[0, 0x7d6e00000)`. The window is
+`memmgrGetClientFbAddrSpaceSize` rounded down to 2 MiB, so it stops below the
+reserved top of FB. The WPR starts above it, and no BAR1 offset reaches the
+protected region ([the window
+geometry](../experiments/27_p2p-peer-access.md#274-the-static-bar1-window-stops-below-the-wpr)).
 
 The [BAR1 probe](../experiments/08_assessment-and-cross-checks.md#082-direct-bar1-framebuffer-read-probe)
 mapped four FB offsets read-only. All four returned zeros:
@@ -87,7 +96,8 @@ the correct host FB path.
 |---|---|---|
 | BAR0 MMIO | registers | reads and writes the documented blocks |
 | BAR0 PRAMIN, 64 KiB at `0x700000` | framebuffer physical addresses | reads the non-WPR heap correctly |
-| BAR1 | BAR1 VAS offsets, not PA | zeros during boot; no boot-time VAS |
+| BAR1, dynamic VAS | BAR1 VAS offsets, not PA | zeros during boot; no boot-time VAS |
+| BAR1, static window | client FB `[0, 0x7d6e00000)`, one-to-one | reads client FB; WPR is above the window |
 
 **Hazards.** A read-only page scan of BAR0 `0x300000`–`0x400000` on a live GSP
 coincides with Xid 13 → Xid 120 → Xid 154 on both cards. Causation is not proven,
@@ -174,6 +184,12 @@ three nonzero bytes per dword, exactly 3/4 of the window, entropy exactly 2.0,
 identical on both cards. It is not firmware. The boot image's slot is
 `frts − sizeOfBootloader` = `0x7f4279000`; it falls inside this poisoned range.
 The decrypted boot image is inside the WPR, and the host has no readable copy.
+
+A peer GPU's copy engine aimed at the same window through the movable BAR0
+PRAMIN aperture gets the same fill, not data ([the peer
+read](../experiments/27_p2p-peer-access.md#275-a-peer-engine-gets-the-wpr-fill)).
+The protection is enforced on the target side, so it does not depend on which
+bus master issues the read.
 
 The earlier `VA 0xefd00000 → PA 0x5dd00000` inference is retracted: those PAs are
 empty. The PRISCV ICD (the GSP's RISC-V in-circuit debugger) uses `0x01000000` in
